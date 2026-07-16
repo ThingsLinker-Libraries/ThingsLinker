@@ -12,7 +12,7 @@
 #include <ThingsLinker.h>
 
 // Your credentials (blueprintId is mandatory)
-ThingsLinker iot("EiAbhe-gQZ7uojINXJMMN6xBhcI6F5idsAaTiCzo--s", "BLUEZ8hnUqddtfu5");
+ThingsLinker iot("9a1977dd443b7d1f0ff4cbdaa4cbf05e1376b786dcf1da344d06a0d8df46845f", "BLUEZ8hnUqddtfu5");
 
 // LED pin
 const int LED_PIN = 2;  // Built-in LED on most ESP32 boards

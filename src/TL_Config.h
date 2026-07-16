@@ -20,7 +20,7 @@
 // ========== Test MQTT Server (HiveMQ Public Broker) ==========
 // For testing without ThingsLinker backend (CURRENTLY ACTIVE)
 #define MQTT_SERVER "mqtt.thingslinker.com"
-#define MQTT_PORT 1883
+#define MQTT_PORT 8883
 // Note: HiveMQ is public - anyone can see your data. Use only for testing!
 
 // ========== BLE Configuration ==========
