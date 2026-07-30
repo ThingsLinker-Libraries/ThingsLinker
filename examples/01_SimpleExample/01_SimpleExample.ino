@@ -63,16 +63,16 @@ void loop() {
  * 3. Create a Device and assign it to the Blueprint
  * 4. Copy these values from the device page:
  *    - Device Auth Token (required)
- *    - Blueprint ID (required - e.g., "BLUEZ8hnUqddtfu5")
+ *    - Blueprint ID (required - e.g., "BLUExxxxxxxxxxxxxxxx")
  *    - Client Key (required)
  *    - Secret Key (required)
  * 5. Paste them in the code above
  *
- * Example credentials format:
- *   authToken = "EiAbhe-gQZ7uojINXJMMN6xBhcI6F5idsAaTiCzo--s"
- *   blueprintId = "BLUEZ8hnUqddtfu5"
- *   clientKey = "client-6909e0dc170629c18aa1769e-72980cda832f45cc8e862a0b16e3d561"
- *   secretKey = "secret-6909e0dc170629c18aa1769e-504a9041f6554a49aaabaf83a897b26c1c31a497d25c4ef480bb6451580d2d2d"
+ * Credential format:
+ *   authToken   = "abc123..."                 // ~64 hex chars
+ *   blueprintId = "BLUExxxxxxxxxxxxxxxx"       // starts with "BLUE"
+ *   clientKey   = "client-xxxx-..."
+ *   secretKey   = "secret-xxxx-..."
  *
  * ========================================
  */

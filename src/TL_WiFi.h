@@ -78,6 +78,20 @@ void clearWiFiCredentials();
 bool hasWiFiCredentials();
 
 /**
+ * @brief Quick scan to check if the saved SSID is visible nearby
+ * @return true if the saved network is in range
+ *
+ * Scans for ~2-3 seconds. If the network is not visible, skip
+ * the full connection timeout and fall back to BLE immediately.
+ *
+ * Example:
+ *   if (hasWiFiCredentials() && isSavedNetworkVisible()) {
+ *     connectWiFi();
+ *   }
+ */
+bool isSavedNetworkVisible();
+
+/**
  * @brief Get WiFi IP address
  * @return IP address as string
  *

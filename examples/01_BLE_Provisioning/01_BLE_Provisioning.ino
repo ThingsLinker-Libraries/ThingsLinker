@@ -1,202 +1,115 @@
 /**
- * @file 01_BLE_Provisioning.ino
- * @brief ThingsLinker BLE Provisioning Example
+ * ============================================================
+ *   ThingsLinker — BLE Provisioning
+ * ============================================================
  *
- * This example demonstrates:
- * 1. BLE provisioning for WiFi credentials
- * 2. Automatic WiFi connection
- * 3. MQTT communication
- * 4. LED control via app
+ *  Demonstrates the full first-boot BLE provisioning flow.
  *
- * Hardware:
- * - ESP32 board
- * - Built-in LED (GPIO 2) or external LED
+ *  First boot (no WiFi saved):
+ *    1. Library starts BLE automatically.
+ *    2. BLE device appears as "ThingsLinker_XXXXXX" (last 6 MAC digits).
+ *    3. Open the ThingsLinker app → Add Device → scan BLE.
+ *    4. App sends WiFi credentials over BLE.
+ *    5. Device connects to WiFi + MQTT, BLE stops.
+ *    6. Device is ready.
  *
- * Usage:
- * 1. Upload this sketch to ESP32
- * 2. Open Serial Monitor (115200 baud)
- * 3. Open ThingsLinker mobile app
- * 4. Scan for BLE device "ThingsLinker_XXXXXX"
- * 5. Enter WiFi credentials in app
- * 6. Device connects to WiFi and MQTT
- * 7. Control LED from app using Button widget on V0
+ *  Subsequent boots:
+ *    - WiFi credentials are saved in flash → direct connect, no BLE.
+ *    - Hold BOOT button (GPIO 0) > 3 seconds to reset WiFi and
+ *      re-provision (useful when changing networks).
+ *
+ *  App widgets (configure in ThingsLinker portal):
+ *    V0  Button  → toggles built-in LED
+ *    V1  LED     → shows current LED state
+ *
+ *  Hardware: any ESP32 board.
+ *    Built-in LED: GPIO 2   (change LED_PIN if different)
+ *    BOOT button:  GPIO 0   (hold > 3 s to reset WiFi)
+ *
+ *  CREDENTIALS: ThingsLinker org portal →
+ *    Blueprints → [Blueprint] → Devices → [Device]
+ * ============================================================
  */
 
 #include <ThingsLinker.h>
 
-// ========== Configuration ==========
+// ── Credentials ──────────────────────────────────────────────
+const char* AUTH_TOKEN   = "YOUR_AUTH_TOKEN";
+const char* BLUEPRINT_ID = "YOUR_BLUEPRINT_ID";
+const char* CLIENT_KEY   = "YOUR_CLIENT_KEY";
+const char* SECRET_KEY   = "YOUR_SECRET_KEY";
 
-// Device credentials (get these from ThingsLinker dashboard)
-// IMPORTANT: All 4 credentials are mandatory
-const char* AUTH_TOKEN = "EiAbhe-gQZ7uojINXJMMN6xBhcI6F5idsAaTiCzo--s";
-const char* BLUEPRINT_ID = "BLUEZ8hnUqddtfu5";  // MANDATORY for OTA and device control
-const char* CLIENT_KEY = "client-6909e0dc170629c18aa1769e-72980cda832f45cc8e862a0b16e3d561";
-const char* SECRET_KEY = "secret-6909e0dc170629c18aa1769e-504a9041f6554a49aaabaf83a897b26c1c31a497d25c4ef480bb6451580d2d2d";
+// ── Hardware ─────────────────────────────────────────────────
+#define LED_PIN   2   // Built-in LED on most ESP32 boards
+#define BOOT_PIN  0   // BOOT button — hold > 3 s to reset WiFi
 
-// Hardware
-#define LED_PIN 2
-#define BUTTON_PIN 0  // Optional: physical button for re-provisioning
-
-// ========== Global Objects ==========
-
+// ── ThingsLinker ─────────────────────────────────────────────
 ThingsLinker iot(AUTH_TOKEN, BLUEPRINT_ID);
 
-bool ledState = false;
-unsigned long lastButtonPress = 0;
+// ── State ─────────────────────────────────────────────────────
+bool ledOn = false;
+unsigned long bootPressStart = 0;
+bool bootWasPressed = false;
 
-// ========== Callbacks ==========
+// ── Callbacks ─────────────────────────────────────────────────
 
-/**
- * Called when button is pressed from app
- */
-void onButtonPressed(String pin, float value) {
-  Serial.println("\n📱 Button press from app!");
-  Serial.printf("  Pin: %s, Value: %.0f\n", pin.c_str(), value);
-
-  // Update LED
-  ledState = (value > 0);
-  digitalWrite(LED_PIN, ledState ? HIGH : LOW);
-
-  // Send LED status back to app
-  iot.setLED("V1", ledState);
-
-  Serial.printf("💡 LED turned %s\n", ledState ? "ON" : "OFF");
+// V0: Button from app toggles built-in LED
+void onAppButton(bool pressed) {
+  ledOn = pressed;
+  digitalWrite(LED_PIN, ledOn ? HIGH : LOW);
+  iot.led("V1", ledOn);   // mirror state to LED widget
+  Serial.println("[V0 Button] LED: " + String(ledOn ? "ON" : "OFF"));
 }
 
-/**
- * Called when WiFi connects
- */
-void onWiFiConnected() {
-  Serial.println("\n✓ WiFi connection established!");
-  Serial.println("  IP: " + WiFi.localIP().toString());
-}
-
-/**
- * Called when MQTT connects
- */
-void onMQTTConnected() {
-  Serial.println("\n✓ MQTT connection established!");
-  Serial.println("💡 Device is ready for control");
-}
-
-/**
- * Called when BLE provisioning completes
- */
-void onProvisioningComplete() {
-  Serial.println("\n✓ Provisioning complete!");
-  Serial.println("🚀 Device is fully configured");
-}
-
-// ========== Setup ==========
-
+// ── Setup ─────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
   delay(1000);
 
-  Serial.println("\n\n");
-  Serial.println("╔════════════════════════════════════════╗");
-  Serial.println("║   ThingsLinker BLE Provisioning Demo  ║");
-  Serial.println("╚════════════════════════════════════════╝");
+  Serial.println("\n╔══════════════════════════════════════════╗");
+  Serial.println(  "║   ThingsLinker — BLE Provisioning Demo   ║");
+  Serial.println(  "╚══════════════════════════════════════════╝\n");
 
-  // Setup hardware
-  pinMode(LED_PIN, OUTPUT);
+  // Hardware setup
+  pinMode(LED_PIN,  OUTPUT);
   digitalWrite(LED_PIN, LOW);
+  pinMode(BOOT_PIN, INPUT_PULLUP);
 
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
-
-  // Test LED
-  Serial.println("\n🔆 Testing LED...");
-  digitalWrite(LED_PIN, HIGH);
-  delay(500);
-  digitalWrite(LED_PIN, LOW);
-  delay(500);
-  Serial.println("✓ LED test complete");
-
-  // Initialize ThingsLinker
-  Serial.println("\n🚀 Initializing ThingsLinker...");
-  iot.enableDebug(true);
-
-  // Set callbacks
-  iot.onWiFiConnected(onWiFiConnected);
-  iot.onMQTTConnected(onMQTTConnected);
-  iot.onProvisioningComplete(onProvisioningComplete);
-
-  // Begin (autoConnect = true will try to connect if credentials exist)
-  iot.begin(AUTH_TOKEN, CLIENT_KEY, SECRET_KEY, true);
-
-  // Subscribe to button control from app
-  iot.subscribe("V0", WIDGET_BUTTON, onButtonPressed);
-
-  // Check if already connected
-  if (iot.isWiFiConnected() && iot.isMQTTConnected()) {
-    Serial.println("\n╔════════════════════════════════════════╗");
-    Serial.println("║  ✓ DEVICE READY                       ║");
-    Serial.println("║  Control LED from app (Button on V0)  ║");
-    Serial.println("╚════════════════════════════════════════╝\n");
-  } else {
-    // Start BLE provisioning
-    Serial.println("\n📱 Starting BLE provisioning...");
-    Serial.println("💡 Open ThingsLinker app to configure WiFi");
-
-    // Start BLE with 5 minute timeout
-    iot.startBLE(nullptr, 300);
-
-    Serial.println("\n╔════════════════════════════════════════╗");
-    Serial.println("║  BLE PROVISIONING ACTIVE               ║");
-    Serial.println("║  1. Open ThingsLinker app              ║");
-    Serial.println("║  2. Scan for BLE device                ║");
-    Serial.println("║  3. Enter WiFi credentials             ║");
-    Serial.println("╚════════════════════════════════════════╝\n");
+  // 3× blink confirms power-on
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(LED_PIN, HIGH); delay(150);
+    digitalWrite(LED_PIN, LOW);  delay(150);
   }
+
+  // Initialise ThingsLinker.
+  // • If no WiFi credentials are saved → BLE provisioning starts automatically.
+  // • If credentials are saved → connects to WiFi + MQTT directly.
+  iot.begin(CLIENT_KEY, SECRET_KEY);
+
+  // Register app widget callbacks
+  iot.onButton("V0", onAppButton);
+
+  Serial.println("[Setup] Complete.");
+  Serial.println("  First time? Open ThingsLinker app → Add Device → scan BLE.");
+  Serial.println("  Already provisioned? Device auto-connects to WiFi.");
+  Serial.println("  Hold BOOT (GPIO 0) > 3 s to reset WiFi and re-provision.\n");
 }
 
-// ========== Loop ==========
-
+// ── Loop ──────────────────────────────────────────────────────
 void loop() {
-  // Run ThingsLinker (handles WiFi, MQTT, BLE)
   iot.run();
 
-  // Check for physical button press (long press = re-provision)
-  if (digitalRead(BUTTON_PIN) == LOW) {
-    if (millis() - lastButtonPress > 50) { // Debounce
-      unsigned long pressStart = millis();
-      while (digitalRead(BUTTON_PIN) == LOW) {
-        delay(10);
-      }
-      unsigned long pressDuration = millis() - pressStart;
-
-      if (pressDuration > 3000) {
-        // Long press - clear WiFi and restart BLE
-        Serial.println("\n🔄 Re-provisioning requested...");
-        iot.clearWiFiCredentials();
-        iot.disconnectWiFi();
-        iot.disconnectMQTT();
-
-        delay(1000);
-
-        Serial.println("📱 Starting BLE provisioning...");
-        iot.startBLE(nullptr, 300);
-
-        // Blink LED to indicate re-provisioning mode
-        for (int i = 0; i < 5; i++) {
-          digitalWrite(LED_PIN, HIGH);
-          delay(200);
-          digitalWrite(LED_PIN, LOW);
-          delay(200);
-        }
-      } else {
-        // Short press - toggle LED manually
-        ledState = !ledState;
-        digitalWrite(LED_PIN, ledState ? HIGH : LOW);
-        Serial.printf("💡 LED toggled %s (manual)\n", ledState ? "ON" : "OFF");
-
-        // Update app
-        if (iot.isMQTTConnected()) {
-          iot.setLED("V1", ledState);
-        }
-      }
-
-      lastButtonPress = millis();
+  // BOOT button: long press (> 3 s) → clear WiFi and re-provision
+  bool pressed = (digitalRead(BOOT_PIN) == LOW);
+  if (pressed && !bootWasPressed) {
+    bootWasPressed = true;
+    bootPressStart = millis();
+  }
+  if (!pressed && bootWasPressed) {
+    bootWasPressed = false;
+    if (millis() - bootPressStart >= 3000) {
+      Serial.println("[BOOT] Long press — resetting WiFi & restarting BLE...");
+      iot.resetWiFi();
     }
   }
 

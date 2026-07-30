@@ -1,7 +1,7 @@
 # ThingsLinker Library Architecture - Complete Step-by-Step Guide
 
 **Date**: 2025-11-12
-**Version**: 1.0
+**Version**: 2.0
 **Platform**: ESP32 (Arduino Framework)
 
 ---
@@ -49,7 +49,7 @@ ThingsLinker/src/
 ```cpp
 #define MAX_VIRTUAL_PINS 125              // V0-V124 support
 #define MQTT_SERVER "mqtt.thingslinker.com"
-#define MQTT_PORT 1883
+#define MQTT_PORT 8883  // TLS/SSL
 #define BLE_DEVICE_NAME_PREFIX "ThingsLinker_"
 #define WIFI_CONNECT_TIMEOUT 30000        // 30 seconds
 #define MQTT_KEEPALIVE 60
@@ -57,7 +57,7 @@ ThingsLinker/src/
 
 **Supports**:
 - Production MQTT server (mqtt.thingslinker.com)
-- Test MQTT server (broker.hivemq.com) - commented by default
+- Test MQTT server (mqtt.thingslinker.com) - commented by default
 - BLE service and characteristic UUIDs
 - Connection timeouts and intervals
 
@@ -67,7 +67,7 @@ ThingsLinker/src/
 
 **Purpose**: Persistent flash storage for app data (separate from WiFi credentials)
 
-**Namespace**: `"thingslinker_app"`
+**Namespace**: `"tl_app"`
 
 **Key Functions**:
 ```cpp
@@ -213,19 +213,19 @@ device/{WidgetType}/{BlueprintId}/{AuthToken}/{VirtualPin}/
 
 **Example Topics**:
 ```
-device/Button/BLUEZ8hnUqddtfu5/EiAbhe-gQZ7uojINXJMMN6xBhcI6F5idsAaTiCzo--s/V0/
-device/Gauge/BLUEZ8hnUqddtfu5/EiAbhe-gQZ7uojINXJMMN6xBhcI6F5idsAaTiCzo--s/V1/
+device/Button/YOUR_BLUEPRINT_ID/YOUR_AUTH_TOKEN/V0/
+device/Gauge/YOUR_BLUEPRINT_ID/YOUR_AUTH_TOKEN/V1/
 ```
 
 **Client ID Generation**:
 ```cpp
 String clientId = String(clientKey) + "_" + getChipID();
-// Example: client-6909e0dc170629c18aa1769e-72980cda832f45cc8e862a0b16e3d561_A8032AB123CD
+// Example: YOUR_CLIENT_KEY_A8032AB123CD
 ```
 
 **Authentication**:
 - **Production**: Username = `clientKey`, Password = `secretKey`
-- **Test (HiveMQ)**: No authentication
+- **Test (ThingsLinker)**: No authentication
 
 **Payload Format**:
 
@@ -279,50 +279,57 @@ void begin(const char* clientKey, const char* secretKey);
 void run();
 ```
 
-#### Widget Functions (Send to App):
+#### Widget Functions (Device → App):
 ```cpp
-void button(const char* pin, bool value);    // Sends "Button" widget
-void led(const char* pin, bool value);       // Sends "LED" widget
-void gauge(const char* pin, float value);    // Sends "Gauge" widget
-void slider(const char* pin, float value);   // Sends "Slider" widget
-void send(const char* pin, float value);     // Sends "Value Display" widget
+void gauge  (const char* pin, float value);  // "Gauge" widget
+void chart  (const char* pin, float value);  // "Chart" widget (telemetry history)
+void display(const char* pin, float value);  // "Value Display" widget
+void send   (const char* pin, float value);  // alias for display()
+void label  (const char* pin, float value);  // "Label" widget
+void led    (const char* pin, bool value);   // "LED" widget (indicator)
+void map    (const char* pin, float lat, float lng); // "Map" widget
 ```
 
-#### Widget Callbacks (Receive from App):
+#### Widget Callbacks (App → Device):
 ```cpp
-void onButton(const char* pin, void (*callback)(bool value));
-void onSlider(const char* pin, void (*callback)(float value));
-void onValue(const char* pin, void (*callback)(float value));
+void onButton  (const char* pin, void (*callback)(bool pressed));
+void onSwitch  (const char* pin, void (*callback)(bool on));
+void onSlider  (const char* pin, void (*callback)(float value));
+void onRGB     (const char* pin, void (*callback)(uint8_t r, uint8_t g, uint8_t b, bool on, uint16_t count, const char* pattern));
+void onLED     (const char* pin, void (*callback)(bool on));
+void onTimer   (const char* pin, void (*callback)(float seconds));
+void onJoystick(const char* pin, void (*callback)(float x, float y));
 ```
 
 #### Status Functions:
 ```cpp
 bool wifiConnected();
 bool mqttConnected();
-bool bleActive();
 String getIP();
 String getChipID();
 ```
 
-#### Storage Functions:
+#### Storage Functions (NVS — survives reboot):
 ```cpp
-bool saveString(const char* key, const String& value);
-String getString(const char* key, const String& defaultValue);
-bool saveInt(const char* key, int value);
-int getInt(const char* key, int defaultValue);
-bool saveFloat(const char* key, float value);
-float getFloat(const char* key, float defaultValue);
-bool saveBool(const char* key, bool value);
-bool getBool(const char* key, bool defaultValue);
-bool hasKey(const char* key);
-bool removeKey(const char* key);
-void clearAllData();
+// Keys max 15 characters; namespace: "tl_app"
+bool   saveString(const char* key, const String& value);
+String getString (const char* key, const String& defaultValue);
+bool   saveInt   (const char* key, int value);
+int    getInt    (const char* key, int defaultValue);
+bool   saveFloat (const char* key, float value);
+float  getFloat  (const char* key, float defaultValue);
+bool   saveBool  (const char* key, bool value);
+bool   getBool   (const char* key, bool defaultValue);
+bool   hasKey    (const char* key);
+bool   removeKey (const char* key);
+void   clearAllData();
 ```
 
 #### Advanced Functions:
 ```cpp
-void resetWiFi();        // Clear WiFi and restart BLE provisioning
-void debug(bool enable); // Enable/disable debug logs
+void resetWiFi();                     // Clear WiFi credentials → restart BLE provisioning
+void debug(bool enable);              // Enable/disable verbose Serial logs
+void setBLEName(const char* name);    // Override default BLE name (call before begin())
 ```
 
 ---
@@ -335,12 +342,10 @@ void debug(bool enable); // Enable/disable debug logs
 ```cpp
 #include <ThingsLinker.h>
 
-ThingsLinker iot("EiAbhe-gQZ7uojINXJMMN6xBhcI6F5idsAaTiCzo--s",
-                 "BLUEZ8hnUqddtfu5");
+ThingsLinker iot("YOUR_AUTH_TOKEN", "YOUR_BLUEPRINT_ID");
 
 void setup() {
-  iot.begin("client-6909e0dc170629c18aa1769e-72980cda832f45cc8e862a0b16e3d561",
-            "secret-6909e0dc170629c18aa1769e-504a9041f6554a49aaabaf83a897b26c1c31a497d25c4ef480bb6451580d2d2d");
+  iot.begin("YOUR_CLIENT_KEY", "YOUR_SECRET_KEY");
 }
 ```
 
@@ -375,24 +380,19 @@ begin()
 **Serial Output**:
 ```
 ========================================
-   ThingsLinker IoT - Super Simple!
+   ThingsLinker IoT Library v2.0
 ========================================
-Chip ID: A8032AB123CD
+Chip ID : A8032AB123CD
+Broker  : mqtt.thingslinker.com:8883
 ========================================
 
-[Setup] Found saved WiFi, connecting...
-[WiFi] Connecting to: MyNetwork
-..........
-[WiFi] ✓ Connected!
-[WiFi] IP: 192.168.1.100
-[WiFi] Signal: -45 dBm
-[Setup] ✓ WiFi connected!
-[MQTT] Connecting to mqtt.thingslinker.com
-[MQTT] Client ID: client-6909e0dc170629c18aa1769e-72980cda832f45cc8e862a0b16e3d561_A8032AB123CD
-[MQTT] Connecting with authentication...
+[Setup] Saved WiFi found, connecting...
+[WiFi] ✓ Connected! IP: 192.168.1.100  RSSI: -45 dBm
+[WiFi] NTP sync started (pool.ntp.org)
+[MQTT] Connecting to mqtt.thingslinker.com:8883
 [MQTT] ✓ Connected!
-[Setup] ✓ MQTT connected!
-[Setup] ✓ Device ready!
+[MQTT] ✓ Status → ONLINE
+[Setup] ✓ MQTT connected — device ready!
 ```
 
 ---
@@ -419,24 +419,16 @@ begin()
 **Serial Output**:
 ```
 ========================================
-   ThingsLinker IoT - Super Simple!
+   ThingsLinker IoT Library v2.0
 ========================================
-Chip ID: A8032AB123CD
+Chip ID : A8032AB123CD
+Broker  : mqtt.thingslinker.com:8883
 ========================================
 
-[Setup] No WiFi found, starting BLE...
-[BLE] Starting...
-[BLE] Device name: ThingsLinker_A8032AB123CD
-[BLE] ✓ Started successfully!
-[BLE] 💡 Open ThingsLinker app to connect
-
-========================================
-  BLE PROVISIONING ACTIVE
-========================================
-1. Open ThingsLinker app
-2. Scan for: ThingsLinker_A8032AB123CD
-3. Enter WiFi credentials
-========================================
+[Setup] No WiFi saved — starting BLE provisioning...
+[BLE] Starting BLE: ThingsLinker_A8032AB123CD
+[BLE] ✓ Advertising started
+[BLE] Open ThingsLinker app → scan → select ThingsLinker_A8032AB123CD → enter WiFi
 ```
 
 ---
@@ -478,28 +470,16 @@ BLE Callback triggered
 
 **Serial Output**:
 ```
-[BLE] Client connected
-[BLE] Received data: {"ssid":"MyNetwork","password":"MyPassword123"}
-[BLE] WiFi credentials received!
-  SSID: MyNetwork
-[BLE] Connecting to WiFi...
-[WiFi] Connecting to: MyNetwork
-..........
-[WiFi] ✓ Connected!
-[WiFi] IP: 192.168.1.100
-[WiFi] Signal: -52 dBm
-[WiFi] ✓ Credentials saved
-[BLE] Status sent: {"status":"connected","ip":"192.168.1.100"}
-[BLE] ✓ WiFi connected!
-[BLE] Stopping BLE in 3 seconds...
-[BLE] Stopping...
-[BLE] ✓ Stopped
-[MQTT] Connecting to mqtt.thingslinker.com
-[MQTT] Client ID: client-6909e0dc170629c18aa1769e-72980cda832f45cc8e862a0b16e3d561_A8032AB123CD
-[MQTT] Connecting with authentication...
+[BLE] App connected
+[BLE] Received credentials — SSID: MyNetwork
+[WiFi] Connecting to MyNetwork...
+[WiFi] ✓ Connected! IP: 192.168.1.100  RSSI: -52 dBm
+[WiFi] ✓ Credentials saved to flash
+[BLE] ✓ Notified app — stopping BLE...
+[MQTT] Connecting to mqtt.thingslinker.com:8883
 [MQTT] ✓ Connected!
-[BLE] ✓ MQTT connected!
-[BLE] ✓ Device ready!
+[MQTT] ✓ Status → ONLINE
+[Setup] ✓ MQTT connected — device ready!
 ```
 
 ---
@@ -572,7 +552,7 @@ iot.gauge("V1", temperature);
 gauge("V1", 25.5)
   → publishMQTT("Gauge", "V1", 25.5)
     → Build topic:
-        "device/Gauge/BLUEZ8hnUqddtfu5/EiAbhe-gQZ7uojINXJMMN6xBhcI6F5idsAaTiCzo--s/V1/"
+        "device/Gauge/YOUR_BLUEPRINT_ID/YOUR_AUTH_TOKEN/V1/"
     → Build payload:
         {"v": 25.5, "t": 1234567890}
     → mqttClient.publish(topic, payload)
@@ -581,15 +561,15 @@ gauge("V1", 25.5)
 
 **Serial Output**:
 ```
-[MQTT] ✓ Published V1: 25.500000
+[MQTT] ✓ V1 = 25.50
 ```
 
 **What Happens in Backend**:
 1. MQTT broker receives message on topic
 2. Backend parses topic to extract:
    - Widget Type: `Gauge`
-   - Blueprint ID: `BLUEZ8hnUqddtfu5`
-   - Auth Token: `EiAbhe-gQZ7uojINXJMMN6xBhcI6F5idsAaTiCzo--s`
+   - Blueprint ID: `YOUR_BLUEPRINT_ID`
+   - Auth Token: `YOUR_AUTH_TOKEN`
    - Virtual Pin: `V1`
 3. Backend validates device authentication
 4. Backend saves telemetry data to database
@@ -622,38 +602,36 @@ onButton("V0", callback)
           callback: wrappedCallback
         }
     → Build topic:
-        "device/Button/BLUEZ8hnUqddtfu5/EiAbhe-gQZ7uojINXJMMN6xBhcI6F5idsAaTiCzo--s/V0/"
+        "device/Button/YOUR_BLUEPRINT_ID/YOUR_AUTH_TOKEN/V0/"
     → mqttClient.subscribe(topic, QoS 1)
 ```
 
 **Serial Output**:
 ```
-[MQTT] ✓ Subscribed: device/Button/BLUEZ8hnUqddtfu5/EiAbhe-gQZ7uojINXJMMN6xBhcI6F5idsAaTiCzo--s/V0/
+[MQTT] ✓ Subscribed: device/Button/YOUR_BLUEPRINT_ID/YOUR_AUTH_TOKEN/V0/
 ```
 
 **When User Presses Button in App**:
 ```
-App publishes to topic:
-  device/Button/BLUEZ8hnUqddtfu5/EiAbhe-gQZ7uojINXJMMN6xBhcI6F5idsAaTiCzo--s/V0/
+App publishes to topic (retained):
+  device/Button/YOUR_BLUEPRINT_ID/YOUR_AUTH_TOKEN/V0/
 
-Payload: {"v": 1}
+Payload: {"v": 1, "t": 1234567890}
 
 Device receives message:
   → mqttCallback() triggered
     → Parse JSON
-    → Extract value: 1
+    → Extract value: 1 → true (bool)
     → Extract pin from topic: "V0"
     → Find matching callback in pinCallbacks array
-    → Call user's lambda: callback(1)
+    → Call user's callback: onButton(true)
       → digitalWrite(LED_PIN, HIGH)
       → Serial.println("LED ON")
 ```
 
 **Serial Output**:
 ```
-[MQTT] Message: device/Button/BLUEZ8hnUqddtfu5/EiAbhe-gQZ7uojINXJMMN6xBhcI6F5idsAaTiCzo--s/V0/
-[MQTT] Data: {"v":1}
-[MQTT] Pin: V0, Value: 1.000000
+[MQTT] ✓ Button V0 = 1
 LED ON
 ```
 
@@ -710,7 +688,7 @@ LED ON
                          ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  connectMQTT(authToken, blueprintId, clientKey, secretKey)  │
-│    • Set MQTT server: mqtt.thingslinker.com:1883            │
+│    • Set MQTT server: mqtt.thingslinker.com:8883            │
 │    • Generate clientId: clientKey + "_" + ChipID            │
 │    • Connect with username/password authentication          │
 │    • Set callback for incoming messages                     │
@@ -753,6 +731,11 @@ iot.gauge("V1", 25.5)  →   publishMQTT()           →   Publish              
                             • Build payload:             Payload:                • Save to DB
                               {"v":25.5,"t":...}         {"v":25.5,...}          • Forward to apps
                             • Publish to MQTT
+
+// Functions: gauge(), chart(), display(), send(), label(), led(), map()
+// All build topic as: device/{Type}/{blueprintId}/{authToken}/{pin}/
+// Payload always: {"v": float, "t": unix_timestamp}
+// RGB full payload: {"v":1,"r":0,"g":255,"b":204,"status":"ON","count":50,"pattern":"Solid","t":ts}
 ```
 
 ### Receiving Commands (App → Cloud → Device)
@@ -777,7 +760,7 @@ User presses button    →   Forward to MQTT          →   Publish             
 | Namespace | Purpose | Data Stored |
 |-----------|---------|-------------|
 | `"thingslinker"` | WiFi credentials | ssid, password, saved flag |
-| `"thingslinker_app"` | App data | User-defined key-value pairs |
+| `"tl_app"` | App data | User-defined key-value pairs (max key: 15 chars) |
 
 ### Usage Examples
 
@@ -919,7 +902,7 @@ checkConnections() [called every 5 seconds]
 - Username/password authentication required
 - Client key and secret key validated by broker
 
-**Test (HiveMQ)**:
+**Test (ThingsLinker)**:
 - No authentication (public broker)
 - **WARNING**: Anyone can see your data!
 
@@ -974,14 +957,17 @@ checkConnections() [called every 5 seconds]
 ### Key Features
 
 ✅ BLE provisioning for easy WiFi setup
-✅ Persistent storage (ESP32 Preferences)
+✅ Persistent storage (ESP32 NVS — namespace `"tl_app"`)
 ✅ Auto-reconnection (WiFi + MQTT)
-✅ 125 virtual pins support
-✅ Widget-based communication
-✅ JSON payloads for data exchange
+✅ 125 virtual pins support (V0–V124)
+✅ Widget-based communication (12 widget types)
+✅ JSON payloads (`{"v":float,"t":unix}`)
 ✅ Unique MQTT topics per device
-✅ Lambda callback support
-✅ Production-ready error handling
+✅ Retained MQTT messages (state restored on reconnect)
+✅ RGB with LED count parameter
+✅ NTP time sync (pool.ntp.org)
+✅ Customizable BLE device name (`setBLEName()`)
+✅ TLS/SSL MQTT connection (port 8883)
 
 ### Typical User Experience
 
@@ -1000,6 +986,6 @@ checkConnections() [called every 5 seconds]
 
 ---
 
-**Generated**: 2025-11-12
-**Author**: Claude Code
+**Generated**: 2025-11-12 | **Updated**: 2025-07-30
+**Version**: 2.0
 **Status**: ✅ Complete Step-by-Step Architecture Documentation

@@ -1,6 +1,6 @@
 /**
  * @file TL_WiFi.cpp
- * @brief Implementation of WiFi management
+ * @brief WiFi management — connect, persist credentials, reconnect
  */
 
 #include "TL_WiFi.h"
@@ -11,138 +11,148 @@
   #include <Preferences.h>
 #elif defined(ESP8266)
   #include <ESP8266WiFi.h>
-  #include <EEPROM.h>
 #endif
 
-// Preferences for ESP32
 #ifdef ESP32
-static Preferences preferences;
+  static Preferences _prefs;
 #endif
 
-/**
- * @brief Connect to WiFi with credentials
- */
+// ─────────────────────────────────────────────────────────────────────────────
+// Internal helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Block until WL_CONNECTED or timeout. Returns true if connected. */
+static bool waitForConnect() {
+  unsigned long start = millis();
+  while (WiFi.status() != WL_CONNECTED) {
+    if (millis() - start >= WIFI_CONNECT_TIMEOUT) return false;
+    delay(250);
+    if (_tlDebugEnabled) Serial.print(".");
+  }
+  if (_tlDebugEnabled) Serial.println();
+  return true;
+}
+
+/** Initiate NTP sync. Call after WiFi connects. Non-blocking — sync happens in background. */
+static void startNTP() {
+#ifdef ESP32
+  configTime(0, 0, NTP_SERVER_1, NTP_SERVER_2);
+  TL_LOG("[WiFi] NTP sync started (" NTP_SERVER_1 ")");
+#endif
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Public API
+// ─────────────────────────────────────────────────────────────────────────────
+
 bool connectWiFi(const char* ssid, const char* password, bool saveCredentials) {
-  Serial.println("[WiFi] Connecting to: " + String(ssid));
+  TL_LOG("[WiFi] Connecting to: " + String(ssid));
 
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
 
-  unsigned long startTime = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - startTime < WIFI_CONNECT_TIMEOUT) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println();
-
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("[WiFi] ✓ Connected!");
-    Serial.println("[WiFi] IP: " + WiFi.localIP().toString());
-    Serial.println("[WiFi] Signal: " + String(WiFi.RSSI()) + " dBm");
-
-    if (saveCredentials) {
-      #ifdef ESP32
-        preferences.begin("thingslinker", false);
-        preferences.putString("ssid", ssid);
-        preferences.putString("password", password);
-        preferences.putBool("saved", true);
-        preferences.end();
-        Serial.println("[WiFi] ✓ Credentials saved");
-      #endif
-    }
-
-    return true;
-  } else {
-    Serial.println("[WiFi] ✗ Connection failed");
+  if (!waitForConnect()) {
+    TL_LOG("[WiFi] ✗ Connection failed (timeout)");
     return false;
   }
+
+  TL_LOG("[WiFi] ✓ Connected! IP: " + WiFi.localIP().toString() +
+         "  RSSI: " + String(WiFi.RSSI()) + " dBm");
+
+  if (saveCredentials) {
+#ifdef ESP32
+    _prefs.begin("thingslinker", false);
+    _prefs.putString("ssid",     ssid);
+    _prefs.putString("password", password);
+    _prefs.putBool("saved", true);
+    _prefs.end();
+    TL_LOG("[WiFi] ✓ Credentials saved to flash");
+#endif
+  }
+
+  startNTP();
+  return true;
 }
 
-/**
- * @brief Connect using saved credentials
- */
 bool connectWiFi() {
-  #ifdef ESP32
-    preferences.begin("thingslinker", true);
-    if (!preferences.getBool("saved", false)) {
-      preferences.end();
-      Serial.println("[WiFi] No saved credentials");
-      return false;
-    }
+#ifdef ESP32
+  _prefs.begin("thingslinker", true);
+  bool saved = _prefs.getBool("saved", false);
+  String ssid     = _prefs.getString("ssid",     "");
+  String password = _prefs.getString("password", "");
+  _prefs.end();
 
-    String ssid = preferences.getString("ssid", "");
-    String password = preferences.getString("password", "");
-    preferences.end();
-
-    if (ssid.length() == 0) {
-      Serial.println("[WiFi] No saved credentials");
-      return false;
-    }
-
-    return connectWiFi(ssid.c_str(), password.c_str(), false);
-  #else
-    Serial.println("[WiFi] No saved credentials");
+  if (!saved || ssid.length() == 0) {
+    TL_LOG("[WiFi] No saved credentials");
     return false;
-  #endif
+  }
+
+  return connectWiFi(ssid.c_str(), password.c_str(), false);
+#else
+  TL_LOG("[WiFi] No saved credentials");
+  return false;
+#endif
 }
 
-/**
- * @brief Disconnect from WiFi
- */
 void disconnectWiFi() {
   WiFi.disconnect(true);
-  Serial.println("[WiFi] Disconnected");
+  TL_LOG("[WiFi] Disconnected");
 }
 
-/**
- * @brief Check if WiFi is connected
- */
 bool isWiFiConnected() {
   return WiFi.status() == WL_CONNECTED;
 }
 
-/**
- * @brief Clear saved credentials
- */
 void clearWiFiCredentials() {
-  #ifdef ESP32
-    preferences.begin("thingslinker", false);
-    preferences.clear();
-    preferences.end();
-    Serial.println("[WiFi] ✓ Credentials cleared");
-  #endif
+#ifdef ESP32
+  _prefs.begin("thingslinker", false);
+  _prefs.clear();
+  _prefs.end();
+  TL_LOG("[WiFi] ✓ Credentials cleared");
+#endif
 }
 
-/**
- * @brief Check if credentials are saved
- */
 bool hasWiFiCredentials() {
-  #ifdef ESP32
-    preferences.begin("thingslinker", true);
-    bool saved = preferences.getBool("saved", false);
-    preferences.end();
-    return saved;
-  #else
-    return false;
-  #endif
+#ifdef ESP32
+  _prefs.begin("thingslinker", true);
+  bool saved = _prefs.getBool("saved", false);
+  _prefs.end();
+  return saved;
+#else
+  return false;
+#endif
 }
 
-/**
- * @brief Get WiFi IP address
- */
+bool isSavedNetworkVisible() {
+#ifdef ESP32
+  _prefs.begin("thingslinker", true);
+  String savedSsid = _prefs.getString("ssid", "");
+  _prefs.end();
+
+  if (savedSsid.length() == 0) return false;
+
+  TL_LOG("[WiFi] Scanning for: " + savedSsid);
+
+  WiFi.mode(WIFI_STA);
+  int n = WiFi.scanNetworks(false, true, false, 200);  // quick active scan
+
+  bool found = false;
+  for (int i = 0; i < n; i++) {
+    if (WiFi.SSID(i) == savedSsid) { found = true; break; }
+  }
+  WiFi.scanDelete();
+
+  TL_LOG(found ? "[WiFi] Network found in range" : "[WiFi] Network not in range");
+  return found;
+#else
+  return false;
+#endif
+}
+
 String getWiFiIP() {
-  if (WiFi.status() == WL_CONNECTED) {
-    return WiFi.localIP().toString();
-  }
-  return "0.0.0.0";
+  return (WiFi.status() == WL_CONNECTED) ? WiFi.localIP().toString() : "0.0.0.0";
 }
 
-/**
- * @brief Get WiFi signal strength
- */
 int getWiFiRSSI() {
-  if (WiFi.status() == WL_CONNECTED) {
-    return WiFi.RSSI();
-  }
-  return -100;
+  return (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : -100;
 }

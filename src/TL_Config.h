@@ -1,50 +1,81 @@
 /**
  * @file TL_Config.h
- * @brief Configuration file for ThingsLinker
+ * @brief Central configuration for the ThingsLinker Arduino library
  *
- * All settings in one place - easy to modify!
+ * Adjust these values to match your deployment. All other source files
+ * pull their settings from here — this is the only file you need to edit.
  */
 
 #ifndef TL_CONFIG_H
 #define TL_CONFIG_H
 
-// ========== Virtual Pins Configuration ==========
-// Supports V0 to V124 (125 pins total)
-#define MAX_VIRTUAL_PINS 125
+// ─────────────────────────────────────────────────────────────────────────────
+// Debug output
+// ─────────────────────────────────────────────────────────────────────────────
+// Compile-time default. To silence ALL library output at compile time (zero
+// overhead, no flash usage), add before your #include:
+//   #define TL_DEBUG_DEFAULT false
+// At runtime, call iot.debug(false) to suppress output without recompiling.
+#ifndef TL_DEBUG_DEFAULT
+  #define TL_DEBUG_DEFAULT true
+#endif
 
-// ========== MQTT Server Configuration ==========
-// Production MQTT server (uncomment for production use)
-// #define MQTT_SERVER "mqtt.thingslinker.com"
-// #define MQTT_PORT 1883
+extern bool _tlDebugEnabled;  // Defined in ThingsLinker.cpp
 
-// ========== Test MQTT Server (HiveMQ Public Broker) ==========
-// For testing without ThingsLinker backend (CURRENTLY ACTIVE)
+#define TL_LOG(msg)  do { if (_tlDebugEnabled) Serial.println(msg);  } while(0)
+#define TL_LOGF(...) do { if (_tlDebugEnabled) Serial.printf(__VA_ARGS__); } while(0)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MQTT broker
+// ─────────────────────────────────────────────────────────────────────────────
+// ThingsLinker production broker.
+// Port 8883 = TCP + TLS (used by ESP32 / Arduino devices).
+// Port 8084 = WebSocket + TLS (used by browser clients — handled server-side).
 #define MQTT_SERVER "mqtt.thingslinker.com"
-#define MQTT_PORT 8883
-// Note: HiveMQ is public - anyone can see your data. Use only for testing!
+#define MQTT_PORT   8883
 
-// ========== BLE Configuration ==========
-#define BLE_DEVICE_NAME_PREFIX "ThingsLinker_"
-#define BLE_SERVICE_UUID "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
-#define BLE_WIFI_CHAR_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
-#define BLE_STATUS_CHAR_UUID "cba1d466-344c-4be3-ab3f-189f80dd7518"
-#define BLE_CONFIRM_CHAR_UUID "8ec90774-f8a8-4f5c-8e5c-3f9a7d8c6b2a"
+// ─────────────────────────────────────────────────────────────────────────────
+// MQTT tuning
+// ─────────────────────────────────────────────────────────────────────────────
+// Buffer must fit the CONNECT packet including LWT topic + message.
+// Typical ThingsLinker LWT topic is ~130 bytes; 512 is a comfortable margin.
+#define MQTT_MAX_PACKET_SIZE 512
+#define MQTT_KEEPALIVE       60    // seconds
 
-// ========== WiFi Configuration ==========
-#define WIFI_CONNECT_TIMEOUT 30000  // 30 seconds
-#define WIFI_RETRY_INTERVAL 5000    // 5 seconds
+// ─────────────────────────────────────────────────────────────────────────────
+// Subscriptions
+// ─────────────────────────────────────────────────────────────────────────────
+// Maximum number of widget pins the library will hold callbacks for.
+// Typical device dashboards use 4-10 widgets; 20 covers advanced use cases.
+// Increase if you need more (each entry uses ~56 bytes of RAM).
+#define MAX_SUBSCRIPTIONS 20
 
-// ========== MQTT Packet Size ==========
-// CRITICAL: Must be large enough for LWT messages with long credentials
-// Default PubSubClient is 256 bytes - NOT ENOUGH for ThingsLinker credentials
-// Required size: ~200+ bytes for LWT packet with full credentials
-#define MQTT_MAX_PACKET_SIZE 512  // Increased from default 256
+// ─────────────────────────────────────────────────────────────────────────────
+// BLE provisioning
+// ─────────────────────────────────────────────────────────────────────────────
+#define BLE_SERVICE_UUID       "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define BLE_WIFI_CHAR_UUID     "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+#define BLE_STATUS_CHAR_UUID   "cba1d466-344c-4be3-ab3f-189f80dd7518"
+#define BLE_CONFIRM_CHAR_UUID  "8ec90774-f8a8-4f5c-8e5c-3f9a7d8c6b2a"
 
-// ========== Timeouts ==========
-#define MQTT_KEEPALIVE 60
-#define STATUS_UPDATE_INTERVAL 60000  // Send status every 60 seconds
+// ─────────────────────────────────────────────────────────────────────────────
+// WiFi
+// ─────────────────────────────────────────────────────────────────────────────
+// How long to wait for WL_CONNECTED before giving up (milliseconds).
+#define WIFI_CONNECT_TIMEOUT 10000
+// Quick active scan to detect whether the saved SSID is in range.
+// If not found, BLE provisioning starts immediately instead of waiting the
+// full WIFI_CONNECT_TIMEOUT — dramatically speeds up first-boot experience.
+#define WIFI_SCAN_TIMEOUT    3000
 
-// ========== Debug ==========
-#define DEBUG_ENABLED true  // Set to false to disable all debug messages
+// ─────────────────────────────────────────────────────────────────────────────
+// NTP
+// ─────────────────────────────────────────────────────────────────────────────
+// NTP servers used to obtain a real Unix timestamp for MQTT payloads.
+// The library initiates NTP sync right after WiFi connects.
+#define NTP_SERVER_1 "pool.ntp.org"
+#define NTP_SERVER_2 "time.cloudflare.com"
+// Unix epoch threshold for NTP validity check: 2020-01-01 00:00:00 UTC
+#define NTP_VALID_EPOCH 1577836800UL
 
 #endif // TL_CONFIG_H

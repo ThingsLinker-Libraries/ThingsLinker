@@ -12,7 +12,7 @@
 #include <ThingsLinker.h>
 
 // Your credentials (blueprintId is mandatory)
-ThingsLinker iot("9a1977dd443b7d1f0ff4cbdaa4cbf05e1376b786dcf1da344d06a0d8df46845f", "BLUEZ8hnUqddtfu5");
+ThingsLinker iot("YOUR_AUTH_TOKEN", "YOUR_BLUEPRINT_ID");
 
 // LED pin
 const int LED_PIN = 2;  // Built-in LED on most ESP32 boards
@@ -25,7 +25,7 @@ void setup() {
   delay(1000);
   
   // Initialize ThingsLinker with MQTT credentials
-  iot.begin("client-6909e0dc170629c18aa1769e-72980cda832f45cc8e862a0b16e3d561", "secret-6909e0dc170629c18aa1769e");
+  iot.begin("YOUR_CLIENT_KEY", "YOUR_SECRET_KEY");
 
   // Listen for button press from app on pin V0
   iot.onButton("V0", [](bool value) {

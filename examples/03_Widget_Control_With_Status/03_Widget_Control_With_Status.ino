@@ -103,7 +103,7 @@ void loop() {
  * 3. Device subscribes to button control topic (V0)
  * 4. Device sends heartbeat every 30 seconds:
  *    - Topic: device/status/{BlueprintId}/{AuthToken}/
- *    - Payload: {"status":"online","t":12345}
+ *    - Payload: "ONLINE" (simple string, retained)
  * 5. App receives heartbeat and shows "Online" status
  * 6. Temperature is published every 5 seconds to V1
  * 7. Button press in app controls LED via MQTT

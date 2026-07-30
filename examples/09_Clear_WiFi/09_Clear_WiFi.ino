@@ -1,117 +1,97 @@
 /**
- * ========================================
- *   ThingsLinker - Clear WiFi & Re-Provision
- * ========================================
+ * ================================================
+ *   ThingsLinker — Clear WiFi & Re-Provision
+ * ================================================
  *
- * Use this sketch to clear saved WiFi credentials
- * and restart BLE provisioning.
+ * Use this sketch to:
+ *   - Erase saved WiFi credentials
+ *   - Restart BLE provisioning (change networks)
+ *   - Factory-reset the device WiFi configuration
  *
- * Perfect for:
- * - Testing BLE provisioning multiple times
- * - Changing WiFi networks
- * - Factory reset
+ * Steps:
+ *   1. Fill in your credentials below
+ *   2. Upload the sketch
+ *   3. Open Serial Monitor (115200 baud)
+ *   4. When "BLE PROVISIONING ACTIVE" appears,
+ *      open the ThingsLinker app to provision WiFi
  *
- * Usage:
- * 1. Upload this sketch
- * 2. Wait for "BLE PROVISIONING ACTIVE"
- * 3. Open ThingsLinker app
- * 4. Scan and provision device
+ * After successful provisioning:
+ *   - Device saves the new WiFi credentials to flash
+ *   - App confirms onboarding → device restarts
+ *   - On next boot the device auto-connects (no BLE)
+ *
+ * To re-provision again: upload this sketch again
+ * or call iot.resetWiFi() in your own code.
+ * ================================================
  */
 
 #include <ThingsLinker.h>
 
-// Your device credentials
-// Get these from ThingsLinker organization portal
+// ── Your device credentials ──────────────────────
 ThingsLinker iot("YOUR_DEVICE_AUTH_TOKEN", "YOUR_BLUEPRINT_ID");
+// ────────────────────────────────────────────────
 
 void setup() {
   Serial.begin(115200);
-  delay(1000);
+  delay(500);
 
-  Serial.println("\n========================================");
-  Serial.println("  ThingsLinker - Clear WiFi");
-  Serial.println("========================================");
-
-  // Clear saved WiFi and start BLE provisioning
-  Serial.println("Clearing saved WiFi credentials...");
-  iot.resetWiFi();
-
-  // Initialize with your MQTT credentials
-  // For HiveMQ testing, use empty strings: iot.begin("", "");
+  // Initialize first so MQTT credentials are stored before BLE starts.
+  // resetWiFi() is called inside begin() when no credentials are found,
+  // but calling it explicitly here forces a clean re-provisioning regardless
+  // of whether credentials were previously saved.
   iot.begin("YOUR_CLIENT_KEY", "YOUR_SECRET_KEY");
 
-  Serial.println("✓ WiFi cleared!");
-  Serial.println("✓ BLE provisioning started!");
-  Serial.println("\nOpen ThingsLinker app to provision device.");
-  Serial.println("========================================\n");
+  // Clear any existing WiFi credentials and restart BLE.
+  // (If begin() already started BLE due to missing credentials,
+  //  resetWiFi() clears them and ensures a fresh BLE session.)
+  iot.resetWiFi();
 }
 
 void loop() {
-  // Keep running to handle BLE provisioning
+  // Keep running so BLE provisioning can complete.
   iot.run();
 
-  // Optional: Send test data after WiFi connects
+  // After provisioning, optionally publish test data.
   static unsigned long lastSend = 0;
-  if (iot.wifiConnected() && millis() - lastSend > 5000) {
+  if (iot.wifiConnected() && iot.mqttConnected() && millis() - lastSend >= 5000) {
     lastSend = millis();
 
-    float temperature = random(20, 30) + random(0, 100) / 100.0;
-    iot.send("V0", temperature);
+    float temperature = 22.0f + random(0, 80) / 10.0f;
+    iot.gauge("V0", temperature);
 
-    Serial.println("Sent temperature: " + String(temperature) + "°C");
+    Serial.printf("[Test] Published temperature: %.1f °C\n", temperature);
   }
 }
 
 /*
- * ========================================
- * Expected Serial Output:
- * ========================================
+ * ================================================
+ * Expected Serial output (first run):
+ * ================================================
  *
- * ThingsLinker - Clear WiFi
- * Clearing saved WiFi credentials...
- * [Reset] Clearing WiFi credentials...
- * [Reset] Starting BLE provisioning...
- * [BLE] Starting...
- * [BLE] Device name: ThingsLinker_BC6575C55494
- * [BLE] ✓ Started successfully!
+ *   [Reset] Clearing WiFi credentials...
+ *   [Reset] Starting BLE provisioning...
+ *   [BLE] Starting... Device: ThingsLinker_BC6575C55494
+ *   [BLE] ✓ Advertising as: ThingsLinker_BC6575C55494
  *
- * ========================================
- *   BLE PROVISIONING ACTIVE
- * ========================================
- * 1. Open ThingsLinker app
- * 2. Scan for: ThingsLinker_BC6575C55494
- * 3. Enter WiFi credentials
- * ========================================
+ *   ========================================
+ *     BLE PROVISIONING ACTIVE
+ *   ========================================
+ *   1. Open ThingsLinker app
+ *   2. Tap "Add Device" → scan for BLE
+ *   3. Select: ThingsLinker_BC6575C55494
+ *   4. Enter WiFi credentials
+ *   ========================================
  *
- * [Wait for app to send credentials...]
+ *   [BLE] App connected
+ *   [BLE] Received: {"ssid":"MyNetwork","password":"..."}
+ *   [BLE] WiFi credentials received for SSID: MyNetwork
+ *   [WiFi] Connecting to: MyNetwork
+ *   [WiFi] ✓ Connected! IP: 192.168.1.42  RSSI: -55 dBm
+ *   [WiFi] NTP sync started (pool.ntp.org)
+ *   [BLE] Status sent: {"status":"connected","ip":"192.168.1.42"}
+ *   [BLE] ✓ WiFi OK — waiting for app to confirm onboarding...
+ *   [BLE] Confirmation: {"status":"complete"}
+ *   [BLE] ✓ Onboarding confirmed — restarting...
  *
- * [BLE] Client connected
- * [BLE] Received data: {"ssid":"MyWiFi","password":"password"}
- * [BLE] WiFi credentials received!
- * [WiFi] Connecting to: MyWiFi
- * ......
- * [WiFi] ✓ Connected!
- * [WiFi] IP: 192.168.1.17
- * [BLE] Status sent: {"status":"connected","ip":"192.168.1.17"}
- * [BLE] ✓ WiFi connected!
- * [BLE] Stopping...
- * [MQTT] Connecting to broker.hivemq.com
- * [MQTT] ✓ Connected!
- *
- * Sent temperature: 23.45°C
- * Sent temperature: 24.67°C
- *
- * ========================================
- * After provisioning:
- * ========================================
- *
- * Device now has WiFi credentials saved!
- * On next reboot, it will auto-connect to WiFi
- * and skip BLE provisioning.
- *
- * To re-provision:
- * - Upload this sketch again, OR
- * - Call iot.resetWiFi() in your code
- *
- * ========================================
+ * ================================================
  */

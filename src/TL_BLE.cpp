@@ -1,6 +1,14 @@
 /**
  * @file TL_BLE.cpp
- * @brief Implementation of BLE provisioning
+ * @brief BLE provisioning — lets the ThingsLinker mobile app send WiFi credentials
+ *        to an ESP32 over Bluetooth Low Energy.
+ *
+ * Flow:
+ *  1. startBLE() advertises the device.
+ *  2. App connects, writes {"ssid":"…","password":"…"} to the WiFi characteristic.
+ *  3. Firmware calls connectWiFi(); on success sends {"status":"connected","ip":"…"}.
+ *  4. App confirms onboarding by writing {"status":"complete"} to the confirm characteristic.
+ *  5. Firmware restarts — next boot connects directly to WiFi and MQTT.
  */
 
 #include "TL_BLE.h"
@@ -9,230 +17,195 @@
 
 #ifdef ESP32
 
-// Global variables
-static BLEServer* bleServer = nullptr;
-static BLECharacteristic* wifiCharacteristic = nullptr;
-static BLECharacteristic* statusCharacteristic = nullptr;
-static BLECharacteristic* confirmCharacteristic = nullptr;
-static bool bleActive = false;
-static void (*credentialsCallback)(String, String) = nullptr;
-static void (*disconnectCallback)() = nullptr;
-static void (*onboardingCompleteCallback)() = nullptr;
+// ─────────────────────────────────────────────────────────────────────────────
+// State
+// ─────────────────────────────────────────────────────────────────────────────
+static BLEServer*         _bleServer         = nullptr;
+static BLECharacteristic* _wifiChar          = nullptr;
+static BLECharacteristic* _statusChar        = nullptr;
+static BLECharacteristic* _confirmChar       = nullptr;
+static bool               _bleActive         = false;
+static void (*_credCb)(String, String)        = nullptr;
+static void (*_disconnectCb)()               = nullptr;
 
-// BLE Server Callbacks
-class MyServerCallbacks : public BLEServerCallbacks {
-  void onConnect(BLEServer* pServer) {
-    Serial.println("[BLE] Client connected");
+// ─────────────────────────────────────────────────────────────────────────────
+// BLE server callbacks
+// ─────────────────────────────────────────────────────────────────────────────
+class ServerCallbacks : public BLEServerCallbacks {
+  void onConnect(BLEServer*) override {
+    TL_LOG("[BLE] App connected");
   }
-
-  void onDisconnect(BLEServer* pServer) {
-    Serial.println("[BLE] Client disconnected");
-
-    // Call disconnect callback if set
-    if (disconnectCallback) {
-      disconnectCallback();
-    }
+  void onDisconnect(BLEServer*) override {
+    TL_LOG("[BLE] App disconnected");
+    if (_disconnectCb) _disconnectCb();
   }
 };
 
-// BLE Characteristic Callbacks for WiFi credentials
-class MyCharacteristicCallbacks : public BLECharacteristicCallbacks {
-  void onWrite(BLECharacteristic* pCharacteristic) {
-    String value = pCharacteristic->getValue().c_str();
-    if (value.length() == 0) return;
+// ─────────────────────────────────────────────────────────────────────────────
+// WiFi credential characteristic — app writes {"ssid":"…","password":"…"}
+// ─────────────────────────────────────────────────────────────────────────────
+class WiFiCharCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic* ch) override {
+    String raw = ch->getValue().c_str();
+    if (raw.length() == 0) return;
 
-    Serial.println("[BLE] Received data: " + value);
+    TL_LOG("[BLE] Received: " + raw);
 
-    // Parse JSON
-    StaticJsonDocument<512> doc;
-    DeserializationError error = deserializeJson(doc, value.c_str());
-
-    if (error) {
-      Serial.println("[BLE] JSON parse error!");
+    StaticJsonDocument<256> doc;
+    if (deserializeJson(doc, raw.c_str()) != DeserializationError::Ok) {
+      TL_LOG("[BLE] JSON parse error");
       return;
     }
 
-    // Extract WiFi credentials
-    const char* ssid = doc["ssid"];
+    const char* ssid     = doc["ssid"];
     const char* password = doc["password"];
 
-    if (ssid && password) {
-      Serial.println("[BLE] WiFi credentials received!");
-      Serial.println("  SSID: " + String(ssid));
+    if (!ssid || !password) {
+      TL_LOG("[BLE] Missing ssid or password field");
+      return;
+    }
 
-      // Call callback
-      if (credentialsCallback) {
-        credentialsCallback(String(ssid), String(password));
-      }
+    TL_LOG("[BLE] WiFi credentials received for SSID: " + String(ssid));
+    if (_credCb) _credCb(String(ssid), String(password));
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Confirm characteristic — app writes {"status":"complete"} after backend
+// registration succeeds, triggering a restart into normal MQTT mode.
+// ─────────────────────────────────────────────────────────────────────────────
+class ConfirmCharCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic* ch) override {
+    String raw = ch->getValue().c_str();
+    if (raw.length() == 0) return;
+
+    TL_LOG("[BLE] Confirmation: " + raw);
+
+    StaticJsonDocument<128> doc;
+    if (deserializeJson(doc, raw.c_str()) != DeserializationError::Ok) return;
+
+    const char* status = doc["status"];
+    if (status && strcmp(status, "complete") == 0) {
+      TL_LOG("[BLE] ✓ Onboarding confirmed — restarting...");
+      Serial.flush();
+      delay(300);
+      ESP.restart();
     }
   }
 };
 
-// BLE Characteristic Callbacks for onboarding confirmation
-class ConfirmCharacteristicCallbacks : public BLECharacteristicCallbacks {
-  void onWrite(BLECharacteristic* pCharacteristic) {
-    String value = pCharacteristic->getValue().c_str();
-    if (value.length() == 0) return;
+// ─────────────────────────────────────────────────────────────────────────────
+// Public API
+// ─────────────────────────────────────────────────────────────────────────────
 
-    Serial.println("[BLE] Received confirmation: " + value);
-
-    // Parse JSON
-    StaticJsonDocument<256> doc;
-    DeserializationError error = deserializeJson(doc, value.c_str());
-
-    if (!error) {
-      const char* status = doc["status"];
-      if (status && String(status) == "complete") {
-        Serial.println("[BLE] ✓ Onboarding confirmed by app!");
-        Serial.println("[System] Restarting ESP32...");
-        Serial.flush();
-
-        // Direct restart - simplest approach
-        delay(500);
-        ESP.restart();
-      }
-    }
-  }
-};
-
-/**
- * @brief Start BLE provisioning
- */
 bool startBLE(const char* deviceName) {
-  if (bleActive) {
-    Serial.println("[BLE] Already active");
+  if (_bleActive) {
+    TL_LOG("[BLE] Already active");
     return false;
   }
 
-  Serial.println("[BLE] Starting...");
-  Serial.println("[BLE] Device name: " + String(deviceName));
+  TL_LOG("[BLE] Starting... Device: " + String(deviceName));
 
-  // Initialize BLE
   BLEDevice::init(deviceName);
 
-  // Create BLE Server
-  bleServer = BLEDevice::createServer();
-  bleServer->setCallbacks(new MyServerCallbacks());
+  _bleServer = BLEDevice::createServer();
+  _bleServer->setCallbacks(new ServerCallbacks());
 
-  // Create BLE Service
-  BLEService* pService = bleServer->createService(BLE_SERVICE_UUID);
+  BLEService* svc = _bleServer->createService(BLE_SERVICE_UUID);
 
-  // WiFi Characteristic (writable with and without response)
-  wifiCharacteristic = pService->createCharacteristic(
+  // WiFi credential characteristic (write only)
+  _wifiChar = svc->createCharacteristic(
     BLE_WIFI_CHAR_UUID,
     BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR
   );
-  wifiCharacteristic->setCallbacks(new MyCharacteristicCallbacks());
+  _wifiChar->setCallbacks(new WiFiCharCallbacks());
 
-  // Status Characteristic (readable + notify)
-  statusCharacteristic = pService->createCharacteristic(
+  // Status characteristic (read + notify — firmware sends connection result)
+  _statusChar = svc->createCharacteristic(
     BLE_STATUS_CHAR_UUID,
     BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY
   );
-  statusCharacteristic->addDescriptor(new BLE2902());
+  _statusChar->addDescriptor(new BLE2902());
 
-  // Confirm Characteristic (writable - for app to send acknowledgment)
-  confirmCharacteristic = pService->createCharacteristic(
+  // Confirm characteristic (write — app signals successful backend registration)
+  _confirmChar = svc->createCharacteristic(
     BLE_CONFIRM_CHAR_UUID,
     BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR
   );
-  confirmCharacteristic->setCallbacks(new ConfirmCharacteristicCallbacks());
+  _confirmChar->setCallbacks(new ConfirmCharCallbacks());
 
-  // Start service
-  pService->start();
+  svc->start();
 
-  // Start advertising
-  BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
-  pAdvertising->addServiceUUID(BLE_SERVICE_UUID);
-  pAdvertising->setScanResponse(true);
-  pAdvertising->start();
+  BLEAdvertising* adv = BLEDevice::getAdvertising();
+  adv->addServiceUUID(BLE_SERVICE_UUID);
+  adv->setScanResponse(true);
+  adv->start();
 
-  bleActive = true;
-  Serial.println("[BLE] ✓ Started successfully!");
-  Serial.println("[BLE] 💡 Open ThingsLinker app to connect");
-
+  _bleActive = true;
+  TL_LOG("[BLE] ✓ Advertising as: " + String(deviceName));
   return true;
 }
 
-/**
- * @brief Stop BLE provisioning
- */
 void stopBLE() {
-  if (!bleActive) return;
+  if (!_bleActive) return;
 
-  Serial.println("[BLE] Stopping...");
-
-  if (bleServer) {
-    bleServer->getAdvertising()->stop();
+  if (_bleServer) {
+    _bleServer->getAdvertising()->stop();
     BLEDevice::deinit(true);
-    bleServer = nullptr;
-    wifiCharacteristic = nullptr;
-    statusCharacteristic = nullptr;
+    _bleServer  = nullptr;
+    _wifiChar   = nullptr;
+    _statusChar = nullptr;
+    _confirmChar = nullptr;
   }
 
-  bleActive = false;
-  Serial.println("[BLE] ✓ Stopped");
+  _bleActive = false;
+  TL_LOG("[BLE] Stopped");
 }
 
-/**
- * @brief Check if BLE is active
- */
 bool isBLEActive() {
-  return bleActive;
+  return _bleActive;
 }
 
-/**
- * @brief Set callback for WiFi credentials
- */
 void onBLECredentialsReceived(void (*callback)(String ssid, String password)) {
-  credentialsCallback = callback;
+  _credCb = callback;
 }
 
-/**
- * @brief Send status back to app
- */
 void sendBLEStatus(bool connected, const String& ip) {
-  if (!bleActive || !statusCharacteristic) return;
+  if (!_bleActive || !_statusChar) return;
 
-  StaticJsonDocument<256> doc;
+  StaticJsonDocument<128> doc;
   doc["status"] = connected ? "connected" : "failed";
-  doc["ip"] = ip;
+  doc["ip"]     = ip;
 
-  String response;
-  serializeJson(doc, response);
+  String json;
+  serializeJson(doc, json);
 
-  statusCharacteristic->setValue(response.c_str());
-  statusCharacteristic->notify();
+  _statusChar->setValue(json.c_str());
+  _statusChar->notify();
 
-  Serial.println("[BLE] Status sent: " + response);
+  TL_LOG("[BLE] Status sent: " + json);
 }
 
-/**
- * @brief Set callback for BLE disconnect
- */
 void onBLEDisconnected(void (*callback)()) {
-  disconnectCallback = callback;
+  _disconnectCb = callback;
 }
 
-/**
- * @brief Set callback for onboarding complete confirmation
- */
 void onBLEOnboardingComplete(void (*callback)()) {
-  onboardingCompleteCallback = callback;
+  // Retained for API compatibility. The confirm characteristic fires ESP.restart()
+  // directly, so a separate callback is not needed.
+  (void)callback;
 }
 
 #else
+// ─────────────────────────────────────────────────────────────────────────────
+// Stub implementations for non-ESP32 platforms
+// ─────────────────────────────────────────────────────────────────────────────
+bool startBLE(const char*) { return false; }
+void stopBLE()              {}
+bool isBLEActive()          { return false; }
+void onBLECredentialsReceived(void (*)(String, String)) {}
+void sendBLEStatus(bool, const String&) {}
+void onBLEDisconnected(void (*)()) {}
+void onBLEOnboardingComplete(void (*)()) {}
 
-// Dummy implementation for non-ESP32 platforms
-bool startBLE(const char* deviceName) {
-  Serial.println("[BLE] Not supported on this platform");
-  return false;
-}
-
-void stopBLE() {}
-bool isBLEActive() { return false; }
-void onBLECredentialsReceived(void (*callback)(String, String)) {}
-void sendBLEStatus(bool connected, const String& ip) {}
-void onBLEDisconnected(void (*callback)()) {}
-
-#endif
+#endif // ESP32

@@ -1,0 +1,80 @@
+# ThingsLinker Arduino Library
+# Syntax Coloring Map
+#
+# KEYWORD1 — Datatypes, classes, objects
+# KEYWORD2 — Methods, functions
+# LITERAL1  — Constants
+
+#######################################
+# Classes
+#######################################
+
+ThingsLinker	KEYWORD1
+
+#######################################
+# Methods — Lifecycle
+#######################################
+
+begin	KEYWORD2
+run	KEYWORD2
+
+#######################################
+# Methods — Publish (Device → App)
+#######################################
+
+gauge	KEYWORD2
+chart	KEYWORD2
+display	KEYWORD2
+send	KEYWORD2
+label	KEYWORD2
+led	KEYWORD2
+button	KEYWORD2
+slider	KEYWORD2
+map	KEYWORD2
+
+#######################################
+# Methods — Subscribe (App → Device)
+#######################################
+
+onButton	KEYWORD2
+onSwitch	KEYWORD2
+onSlider	KEYWORD2
+onValue	KEYWORD2
+onRGB	KEYWORD2
+onLED	KEYWORD2
+onTimer	KEYWORD2
+onJoystick	KEYWORD2
+
+#######################################
+# Methods — Status
+#######################################
+
+wifiConnected	KEYWORD2
+mqttConnected	KEYWORD2
+bleActive	KEYWORD2
+getIP	KEYWORD2
+getChipID	KEYWORD2
+
+#######################################
+# Methods — Configuration
+#######################################
+
+resetWiFi	KEYWORD2
+debug	KEYWORD2
+setBLEName	KEYWORD2
+
+#######################################
+# Methods — Storage (NVS)
+#######################################
+
+saveString	KEYWORD2
+getString	KEYWORD2
+saveInt	KEYWORD2
+getInt	KEYWORD2
+saveFloat	KEYWORD2
+getFloat	KEYWORD2
+saveBool	KEYWORD2
+getBool	KEYWORD2
+hasKey	KEYWORD2
+removeKey	KEYWORD2
+clearAllData	KEYWORD2

@@ -1,283 +1,211 @@
 /**
  * @file ThingsLinker.cpp
- * @brief Super simple implementation
+ * @brief ThingsLinker library — main class implementation
  */
 
 #include "ThingsLinker.h"
 
-// Static variable for restart flag
-bool ThingsLinker::_shouldRestart = false;
+// ── Global debug flag (controlled via iot.debug()) ───────────────────────────
+// Declared extern in TL_Config.h so all modules can read it via TL_LOG().
+bool _tlDebugEnabled = TL_DEBUG_DEFAULT;
 
-/**
- * @brief Constructor
- */
+// ─────────────────────────────────────────────────────────────────────────────
+// Constructor
+// ─────────────────────────────────────────────────────────────────────────────
 ThingsLinker::ThingsLinker(const char* authToken, const char* blueprintId)
   : _authToken(authToken),
     _blueprintId(blueprintId),
     _clientKey(nullptr),
     _secretKey(nullptr),
-    _debugEnabled(true),
+    _bleBrandName("ThingsLinker"),
     _initialized(false),
     _lastCheck(0) {
 }
 
-/**
- * @brief Initialize ThingsLinker
- */
+// ─────────────────────────────────────────────────────────────────────────────
+// begin()
+// ─────────────────────────────────────────────────────────────────────────────
 void ThingsLinker::begin(const char* clientKey, const char* secretKey) {
   _clientKey = clientKey;
   _secretKey = secretKey;
 
-  Serial.begin(115200);
-  delay(1000);
+  // Initialise Serial if the sketch hasn't already done so.
+  if (!Serial) {
+    Serial.begin(115200);
+    delay(100);
+  }
 
-  Serial.println("\n========================================");
-  Serial.println("   ThingsLinker IoT - Super Simple!");
-  Serial.println("========================================");
-  Serial.println("Chip ID: " + getChipID());
-  Serial.println("========================================\n");
+  TL_LOG("\n========================================");
+  TL_LOG("   ThingsLinker IoT Library v2.0");
+  TL_LOG("========================================");
+  TL_LOG("Chip ID : " + getChipID());
+  TL_LOG("Broker  : " MQTT_SERVER ":" + String(MQTT_PORT));
+  TL_LOG("========================================\n");
 
-  // Try to connect to saved WiFi
   if (hasWiFiCredentials()) {
-    Serial.println("[Setup] Found saved WiFi, connecting...");
-    if (connectWiFi()) {
-      Serial.println("[Setup] ✓ WiFi connected!");
-
-      // Connect MQTT
-      if (connectMQTT(_authToken, _blueprintId, _clientKey, _secretKey)) {
-        Serial.println("[Setup] ✓ MQTT connected!");
-        Serial.println("[Setup] ✓ Device ready!");
-      }
-    } else {
-      // WiFi failed, start BLE
-      Serial.println("[Setup] WiFi failed, starting BLE...");
+    if (!isSavedNetworkVisible()) {
+      // SSID not visible — skip the full timeout and go straight to BLE.
+      TL_LOG("[Setup] Saved network not in range — starting BLE...");
       handleBLEProvisioning();
+    } else {
+      TL_LOG("[Setup] Saved WiFi found, connecting...");
+      if (connectWiFi()) {
+        TL_LOG("[Setup] ✓ WiFi connected");
+        if (connectMQTT(_authToken, _blueprintId, _clientKey, _secretKey)) {
+          TL_LOG("[Setup] ✓ MQTT connected — device ready!");
+        }
+      } else {
+        // SSID visible but connection failed (wrong password / auth issue).
+        // Clear credentials so next boot skips the timeout.
+        TL_LOG("[Setup] WiFi failed — clearing credentials, starting BLE...");
+        clearWiFiCredentials();
+        handleBLEProvisioning();
+      }
     }
   } else {
-    // No WiFi credentials, start BLE
-    Serial.println("[Setup] No WiFi found, starting BLE...");
+    TL_LOG("[Setup] No WiFi saved — starting BLE...");
     handleBLEProvisioning();
   }
 
   _initialized = true;
 }
 
-/**
- * @brief Main loop
- */
+// ─────────────────────────────────────────────────────────────────────────────
+// run()
+// ─────────────────────────────────────────────────────────────────────────────
 void ThingsLinker::run() {
   if (!_initialized) return;
 
-  // Check if restart is requested (MUST be checked even during BLE provisioning)
-  if (_shouldRestart) {
-    Serial.println("[System] Restarting NOW!");
-    Serial.flush();
-    delay(100);
-    ESP.restart();
-  }
+  // BLE provisioning is blocking from the MQTT perspective — skip everything
+  // else while the app is setting up the device.
+  if (isBLEActive()) return;
 
-  // Don't run MQTT or connection checks while BLE is active
-  if (isBLEActive()) {
-    return;  // Let BLE handle everything during provisioning
-  }
-
-  // Process MQTT
   loopMQTT();
 
-  // Check connections every 5 seconds
+  // Lightweight connection health check every 5 s.
   unsigned long now = millis();
-  if (now - _lastCheck > 5000) {
+  if (now - _lastCheck >= 5000UL) {
     _lastCheck = now;
     checkConnections();
   }
 }
 
-/**
- * @brief Handle BLE provisioning
- */
+// ─────────────────────────────────────────────────────────────────────────────
+// BLE provisioning
+// ─────────────────────────────────────────────────────────────────────────────
 void ThingsLinker::handleBLEProvisioning() {
-  String deviceName = String(BLE_DEVICE_NAME_PREFIX) + getChipID();
+  String deviceName = String(_bleBrandName) + "_" + getChipID();
 
-  // Callback not needed - restart happens directly in BLE callback
-  // onBLEOnboardingComplete([]() {
-  //   // Restart handled in TL_BLE.cpp
-  // });
-
-  // Set callback for when app disconnects (fallback if no confirmation received)
   onBLEDisconnected([]() {
-    Serial.println("[BLE] App disconnected");
+    TL_LOG("[BLE] App disconnected");
   });
 
-  // Set callback for WiFi credentials
+  // When the app sends WiFi credentials, attempt connection and report status.
   onBLECredentialsReceived([](String ssid, String password) {
-    Serial.println("[BLE] Connecting to WiFi...");
+    TL_LOG("[BLE] Attempting WiFi: " + ssid);
 
-    bool connected = connectWiFi(ssid.c_str(), password.c_str(), true);
+    bool ok = connectWiFi(ssid.c_str(), password.c_str(), true);
+    sendBLEStatus(ok, ok ? getWiFiIP() : "");
 
-    if (connected) {
-      Serial.println("[BLE] ✓ WiFi connected!");
-      Serial.println("[BLE] Sending status to app...");
-      sendBLEStatus(connected, getWiFiIP());
-      Serial.println("[BLE] ✓ Status sent, waiting for app to disconnect...");
+    if (ok) {
+      TL_LOG("[BLE] ✓ WiFi OK — waiting for app to confirm onboarding...");
     } else {
-      Serial.println("[BLE] ✗ WiFi connection failed!");
-      Serial.println("[BLE] Sending failure status...");
-      sendBLEStatus(false, "");
-      Serial.println("[BLE] Keeping BLE active for retry...");
+      TL_LOG("[BLE] ✗ WiFi failed — BLE still active for retry");
     }
   });
 
-  // Start BLE
   startBLE(deviceName.c_str());
 
-  Serial.println("\n========================================");
-  Serial.println("  BLE PROVISIONING ACTIVE");
-  Serial.println("========================================");
-  Serial.println("1. Open ThingsLinker app");
-  Serial.println("2. Scan for: " + deviceName);
-  Serial.println("3. Enter WiFi credentials");
-  Serial.println("========================================\n");
+  TL_LOG("\n========================================");
+  TL_LOG("  BLE PROVISIONING ACTIVE");
+  TL_LOG("========================================");
+  TL_LOG("1. Open ThingsLinker app");
+  TL_LOG("2. Tap  \"Add Device\"  →  scan for BLE");
+  TL_LOG("3. Select: " + deviceName);
+  TL_LOG("4. Enter WiFi credentials");
+  TL_LOG("========================================\n");
 }
 
-/**
- * @brief Check and reconnect if needed
- */
+// ─────────────────────────────────────────────────────────────────────────────
+// Connection health check (called from run() every 5 s)
+// ─────────────────────────────────────────────────────────────────────────────
 void ThingsLinker::checkConnections() {
-  // Check WiFi - only attempt reconnection if credentials are saved
   if (!isWiFiConnected() && hasWiFiCredentials()) {
-    Serial.println("[Check] WiFi disconnected, reconnecting...");
+    TL_LOG("[Check] WiFi lost — reconnecting...");
     connectWiFi();
   }
 
-  // Check MQTT - only attempt reconnection if WiFi is connected
   if (isWiFiConnected() && !isMQTTConnected()) {
-    Serial.println("[Check] MQTT disconnected, reconnecting...");
+    TL_LOG("[Check] MQTT lost — reconnecting...");
     connectMQTT(_authToken, _blueprintId, _clientKey, _secretKey);
   }
 }
 
-// ========== Widget Functions ==========
+// ─────────────────────────────────────────────────────────────────────────────
+// Widget publish
+// ─────────────────────────────────────────────────────────────────────────────
+void ThingsLinker::button (const char* pin, bool  v) { publishMQTT("Button",        pin, v ? 1.0f : 0.0f); }
+void ThingsLinker::led    (const char* pin, bool  v) { publishMQTT("LED",            pin, v ? 1.0f : 0.0f); }
+void ThingsLinker::map    (const char* pin, float lat, float lng) { publishMQTTMap(pin, lat, lng); }
+void ThingsLinker::gauge  (const char* pin, float v) { publishMQTT("Gauge",          pin, v); }
+void ThingsLinker::chart  (const char* pin, float v) { publishMQTT("Chart",          pin, v); }
+void ThingsLinker::display(const char* pin, float v) { publishMQTT("Value Display",  pin, v); }
+void ThingsLinker::label  (const char* pin, float v) { publishMQTT("Label",          pin, v); }
+void ThingsLinker::slider (const char* pin, float v) { publishMQTT("Slider",         pin, v); }
+void ThingsLinker::send   (const char* pin, float v) { publishMQTT("Value Display",  pin, v); }
 
-void ThingsLinker::button(const char* pin, bool value) {
-  publishMQTT("Button", pin, value ? 1.0f : 0.0f);
+// ─────────────────────────────────────────────────────────────────────────────
+// Widget subscribe
+// ─────────────────────────────────────────────────────────────────────────────
+void ThingsLinker::onButton(const char* pin, void (*cb)(bool))  { subscribeMQTTButton("Button", pin, cb); }
+void ThingsLinker::onLED   (const char* pin, void (*cb)(bool))  { subscribeMQTTButton("LED",    pin, cb); }
+void ThingsLinker::onSwitch(const char* pin, void (*cb)(bool))  { subscribeMQTTButton("Switch", pin, cb); }
+void ThingsLinker::onSlider  (const char* pin, void (*cb)(float))                                   { subscribeMQTT("Slider",        pin, cb); }
+void ThingsLinker::onValue   (const char* pin, void (*cb)(float))                                   { subscribeMQTT("Value Display", pin, cb); }
+void ThingsLinker::onRGB     (const char* pin, void (*cb)(uint8_t r, uint8_t g, uint8_t b, bool on, uint16_t count, const char* pattern)) { subscribeRGBMQTT(pin, cb); }
+void ThingsLinker::onTimer   (const char* pin, void (*cb)(float))                                   { subscribeMQTT("Timer",         pin, cb); }
+void ThingsLinker::onJoystick(const char* pin, void (*cb)(float x, float y))                        { subscribeJoystickMQTT(pin, cb);           }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Status
+// ─────────────────────────────────────────────────────────────────────────────
+bool   ThingsLinker::wifiConnected() { return isWiFiConnected(); }
+bool   ThingsLinker::mqttConnected() { return isMQTTConnected(); }
+bool   ThingsLinker::bleActive()     { return isBLEActive();    }
+String ThingsLinker::getIP()         { return getWiFiIP();      }
+String ThingsLinker::getChipID()     { return ::getChipID();    }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Storage (delegate to TL_Storage)
+// ─────────────────────────────────────────────────────────────────────────────
+bool   ThingsLinker::saveString(const char* k, const String& v) { return ::saveString(k, v); }
+String ThingsLinker::getString (const char* k, const String& d) { return ::getString(k, d);  }
+bool   ThingsLinker::saveInt   (const char* k, int v)           { return ::saveInt(k, v);   }
+int    ThingsLinker::getInt    (const char* k, int d)           { return ::getInt(k, d);    }
+bool   ThingsLinker::saveFloat (const char* k, float v)         { return ::saveFloat(k, v); }
+float  ThingsLinker::getFloat  (const char* k, float d)         { return ::getFloat(k, d);  }
+bool   ThingsLinker::saveBool  (const char* k, bool v)          { return ::saveBool(k, v);  }
+bool   ThingsLinker::getBool   (const char* k, bool d)          { return ::getBool(k, d);   }
+bool   ThingsLinker::hasKey    (const char* k)                  { return ::hasKey(k);       }
+bool   ThingsLinker::removeKey (const char* k)                  { return ::removeKey(k);    }
+void   ThingsLinker::clearAllData()                             { ::clearAllData();          }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Advanced
+// ─────────────────────────────────────────────────────────────────────────────
+void ThingsLinker::setBLEName(const char* brandName) {
+  _bleBrandName = brandName;
 }
-
-void ThingsLinker::led(const char* pin, bool value) {
-  publishMQTT("LED", pin, value ? 1.0f : 0.0f);
-}
-
-void ThingsLinker::gauge(const char* pin, float value) {
-  publishMQTT("Gauge", pin, value);
-}
-
-void ThingsLinker::slider(const char* pin, float value) {
-  publishMQTT("Slider", pin, value);
-}
-
-void ThingsLinker::send(const char* pin, float value) {
-  publishMQTT("Value Display", pin, value);
-}
-
-void ThingsLinker::onButton(const char* pin, void (*callback)(bool value)) {
-  subscribeMQTTButton("Button", pin, callback);
-}
-
-void ThingsLinker::onSlider(const char* pin, void (*callback)(float value)) {
-  subscribeMQTT("Slider", pin, callback);
-}
-
-void ThingsLinker::onValue(const char* pin, void (*callback)(float value)) {
-  subscribeMQTT("Value Display", pin, callback);
-}
-
-String ThingsLinker::buildTopic(const char* widgetType, const char* pin) {
-  return "device/" + String(widgetType) + "/" + String(_blueprintId) + "/" +
-         String(_authToken) + "/" + String(pin) + "/";
-}
-
-// ========== Status Functions ==========
-
-bool ThingsLinker::wifiConnected() {
-  return isWiFiConnected();
-}
-
-bool ThingsLinker::mqttConnected() {
-  return isMQTTConnected();
-}
-
-bool ThingsLinker::bleActive() {
-  return isBLEActive();
-}
-
-String ThingsLinker::getIP() {
-  return getWiFiIP();
-}
-
-String ThingsLinker::getChipID() {
-  return ::getChipID();
-}
-
-// ========== Storage Functions ==========
-
-bool ThingsLinker::saveString(const char* key, const String& value) {
-  return ::saveString(key, value);
-}
-
-String ThingsLinker::getString(const char* key, const String& defaultValue) {
-  return ::getString(key, defaultValue);
-}
-
-bool ThingsLinker::saveInt(const char* key, int value) {
-  return ::saveInt(key, value);
-}
-
-int ThingsLinker::getInt(const char* key, int defaultValue) {
-  return ::getInt(key, defaultValue);
-}
-
-bool ThingsLinker::saveFloat(const char* key, float value) {
-  return ::saveFloat(key, value);
-}
-
-float ThingsLinker::getFloat(const char* key, float defaultValue) {
-  return ::getFloat(key, defaultValue);
-}
-
-bool ThingsLinker::saveBool(const char* key, bool value) {
-  return ::saveBool(key, value);
-}
-
-bool ThingsLinker::getBool(const char* key, bool defaultValue) {
-  return ::getBool(key, defaultValue);
-}
-
-bool ThingsLinker::hasKey(const char* key) {
-  return ::hasKey(key);
-}
-
-bool ThingsLinker::removeKey(const char* key) {
-  return ::removeKey(key);
-}
-
-void ThingsLinker::clearAllData() {
-  ::clearAllData();
-}
-
-// ========== Advanced Functions ==========
 
 void ThingsLinker::resetWiFi() {
-  Serial.println("[Reset] Clearing WiFi credentials...");
+  TL_LOG("[Reset] Clearing WiFi credentials...");
   clearWiFiCredentials();
-  disconnectWiFi();
   disconnectMQTT();
-
-  Serial.println("[Reset] Starting BLE provisioning...");
+  disconnectWiFi();
+  TL_LOG("[Reset] Starting BLE provisioning...");
   handleBLEProvisioning();
 }
 
 void ThingsLinker::debug(bool enable) {
-  _debugEnabled = enable;
+  _tlDebugEnabled = enable;
 }
-
-// Global instance pointer (for callbacks)
-ThingsLinker* _globalThingsLinker = nullptr;

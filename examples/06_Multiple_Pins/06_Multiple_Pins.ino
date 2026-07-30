@@ -68,9 +68,11 @@ void setup() {
 
   iot.onButton("V50", [](bool state) {
     Serial.println("Master Control: " + String(state ? "ALL ON" : "ALL OFF"));
+    char pin[8];
     for (int i = 0; i < 5; i++) {
+      snprintf(pin, sizeof(pin), "V%d", 20 + i);
       digitalWrite(LED_PINS[i], state ? HIGH : LOW);
-      iot.led("V" + String(20 + i), state);  // Update LED widgets
+      iot.led(pin, state);  // Update LED widgets
     }
   });
 
@@ -110,9 +112,11 @@ void setup() {
       Serial.println("🔄 Factory Reset Triggered!");
 
       // Turn off all LEDs
+      char pin[8];
       for (int i = 0; i < 5; i++) {
+        snprintf(pin, sizeof(pin), "V%d", 20 + i);
         digitalWrite(LED_PINS[i], LOW);
-        iot.led("V" + String(20 + i), false);
+        iot.led(pin, false);
       }
 
       // Clear all stored data
@@ -164,9 +168,11 @@ void loop() {
     // ========== LED Status (V20-V24) ==========
     // Send LED states back to app
 
+    char pin[8];
     for (int i = 0; i < 5; i++) {
+      snprintf(pin, sizeof(pin), "V%d", 20 + i);
       bool ledState = digitalRead(LED_PINS[i]);
-      iot.led("V" + String(20 + i), ledState);
+      iot.led(pin, ledState);
     }
 
     // Print summary

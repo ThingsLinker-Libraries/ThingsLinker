@@ -1,385 +1,417 @@
 /**
  * @file TL_MQTT.cpp
- * @brief Implementation of MQTT communication
+ * @brief MQTT communication over TLS — publish sensor data, subscribe to widget controls
  */
 
 #include "TL_MQTT.h"
 #include "TL_Config.h"
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
+#include <time.h>
 
 #ifdef ESP32
-#include <WiFi.h>
+  #include <WiFi.h>
+  #include <WiFiClientSecure.h>
 #elif defined(ESP8266)
-#include <ESP8266WiFi.h>
+  #include <ESP8266WiFi.h>
+  #include <WiFiClientSecureBearSSL.h>
 #endif
 
-// Global variables
-static WiFiClient wifiClient;
-static PubSubClient mqttClient(wifiClient);
-static String authToken = "";
-static String blueprintId = "";
-static unsigned long lastReconnect = 0;
-// Status management is now handled by MQTT Last Will and Testament (LWT)
+// ─────────────────────────────────────────────────────────────────────────────
+// TLS client + MQTT client
+// ─────────────────────────────────────────────────────────────────────────────
+// setInsecure() skips certificate verification, which is acceptable for ESP32
+// IoT devices connecting to a known, fixed broker URL. For stricter security,
+// replace with wifiClient.setCACert(your_ca_pem).
+#ifdef ESP32
+  static WiFiClientSecure _wifiClient;
+#elif defined(ESP8266)
+  static BearSSL::WiFiClientSecure _wifiClient;
+#endif
 
-// Pin callbacks (V0 - V124 = 125 pins total)
-struct PinCallback
-{
-  String pin;
-  String widgetType;
-  void (*callback)(float);
-};
-static PinCallback pinCallbacks[125];
-static int pinCallbackCount = 0;
+static PubSubClient _mqtt(_wifiClient);
 
-// Button callbacks (for bool conversion)
-struct ButtonCallback
-{
-  String pin;
-  String widgetType;
-  void (*callback)(bool);
+// ─────────────────────────────────────────────────────────────────────────────
+// Device identity (set once in connectMQTT, reused by subscribe/publish)
+// ─────────────────────────────────────────────────────────────────────────────
+static String _authToken   = "";
+static String _blueprintId = "";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Callback tables
+// ─────────────────────────────────────────────────────────────────────────────
+struct FloatCallback {
+  char pin[8];           // "V0" … "V124"
+  char widgetType[20];   // "Button", "Slider", …
+  void (*fn)(float);
 };
-static ButtonCallback buttonCallbacks[125];
-static int buttonCallbackCount = 0;
+
+struct BoolCallback {
+  char pin[8];
+  char widgetType[20];
+  void (*fn)(bool);
+};
+
+// RGB widget: receives r, g, b channels + on/off + LED count + pattern name
+struct RGBCallback {
+  char pin[8];
+  void (*fn)(uint8_t r, uint8_t g, uint8_t b, bool on, uint16_t count, const char* pattern);
+};
+
+// Joystick widget: receives x, y axis values
+struct JoystickCallback {
+  char pin[8];
+  void (*fn)(float x, float y);
+};
+
+static FloatCallback    _floatCbs[MAX_SUBSCRIPTIONS];
+static int              _floatCbCount    = 0;
+
+static BoolCallback     _boolCbs[MAX_SUBSCRIPTIONS];
+static int              _boolCbCount     = 0;
+
+static RGBCallback      _rgbCbs[MAX_SUBSCRIPTIONS];
+static int              _rgbCbCount      = 0;
+
+static JoystickCallback _joystickCbs[MAX_SUBSCRIPTIONS];
+static int              _joystickCbCount = 0;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * @brief MQTT callback for incoming messages
+ * Return the best available Unix timestamp.
+ * Uses NTP-synced wall-clock time when available; falls back to millis()-based
+ * seconds since boot if NTP has not yet synced. The fallback value is never
+ * zero (millis() runs from reset), which keeps the backend's monotonicity
+ * check happy on very early payloads.
  */
-static void mqttCallback(char *topic, byte *payload, unsigned int length)
-{
-  // Convert payload to string
-  String message = "";
-  for (unsigned int i = 0; i < length; i++)
-  {
-    message += (char)payload[i];
+static unsigned long getTimestamp() {
+  time_t now = time(nullptr);
+  return (now > (time_t)NTP_VALID_EPOCH) ? (unsigned long)now : (millis() / 1000UL);
+}
+
+/**
+ * Build the standard ThingsLinker MQTT topic.
+ * Format: device/{WidgetType}/{BlueprintId}/{AuthToken}/{VirtualPin}/
+ */
+static String buildTopic(const char* widgetType, const char* pin) {
+  return String("device/") + widgetType + "/" + _blueprintId + "/" + _authToken + "/" + pin + "/";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MQTT message callback
+// ─────────────────────────────────────────────────────────────────────────────
+static void onMqttMessage(char* topic, byte* payload, unsigned int length) {
+  // Convert to null-terminated string
+  char buf[length + 1];
+  memcpy(buf, payload, length);
+  buf[length] = '\0';
+
+  TL_LOG("[MQTT] Received on: " + String(topic));
+  TL_LOG("[MQTT] Payload: " + String(buf));
+
+  // Parse JSON — 512 bytes covers RGB payloads with r,g,b,pattern,count fields
+  StaticJsonDocument<512> doc;
+  if (deserializeJson(doc, buf) != DeserializationError::Ok) {
+    TL_LOG("[MQTT] JSON parse error — ignored");
+    return;
   }
-
-  Serial.println("[MQTT] Message: " + String(topic));
-  Serial.println("[MQTT] Data: " + message);
-
-  // Parse JSON
-  StaticJsonDocument<256> doc;
-  DeserializationError error = deserializeJson(doc, message);
-
-  if (error)
-  {
-    Serial.println("[MQTT] JSON parse error");
+  if (!doc.containsKey("v")) {
+    TL_LOG("[MQTT] No 'v' field — ignored");
     return;
   }
 
-  if (!doc.containsKey("v"))
-  {
-    Serial.println("[MQTT] No 'v' field");
-    return;
+  float value = doc["v"].as<float>();
+
+  // Extract virtual pin from topic segment [4]
+  // Topic: device/{WidgetType}/{BlueprintId}/{AuthToken}/{VirtualPin}/
+  //         [0]    [1]           [2]           [3]         [4]
+  String t = String(topic);
+  int slashes[5];
+  int found = 0;
+  for (int i = 0; i < (int)t.length() && found < 5; i++) {
+    if (t[i] == '/') slashes[found++] = i;
   }
+  if (found < 5) return;
 
-  float value = doc["v"];
+  String pin = t.substring(slashes[3] + 1, slashes[4]);
+  TL_LOG("[MQTT] Pin=" + pin + "  value=" + String(value));
 
-  // Extract pin from topic: device/{WidgetType}/{BlueprintId}/{AuthToken}/{VirtualPin}/
-  String topicStr = String(topic);
-
-  // Find all slash positions
-  int slashPos[5] = {-1, -1, -1, -1, -1};
-  int slashCount = 0;
-
-  for (unsigned int i = 0; i < topicStr.length() && slashCount < 5; i++)
-  {
-    if (topicStr.charAt(i) == '/')
-    {
-      slashPos[slashCount] = i;
-      slashCount++;
+  // RGB widget: payload contains separate r, g, b fields (and optional count)
+  if (doc.containsKey("r") && doc.containsKey("g") && doc.containsKey("b")) {
+    for (int i = 0; i < _rgbCbCount; i++) {
+      if (pin == _rgbCbs[i].pin && _rgbCbs[i].fn) {
+        uint8_t     r       = doc["r"].as<uint8_t>();
+        uint8_t     g       = doc["g"].as<uint8_t>();
+        uint8_t     b       = doc["b"].as<uint8_t>();
+        uint16_t    count   = doc.containsKey("count")   ? doc["count"].as<uint16_t>()      : 1;
+        const char* pattern = doc.containsKey("pattern") ? doc["pattern"].as<const char*>() : "";
+        _rgbCbs[i].fn(r, g, b, value > 0.0f, count, pattern);
+        return;
+      }
     }
   }
 
-  String pin = "";
-  // Pin is between 4th and 5th slash (index 3 and 4)
-  if (slashCount >= 5)
-  {
-    pin = topicStr.substring(slashPos[3] + 1, slashPos[4]);
+  // Joystick widget: payload contains separate x, y fields
+  if (doc.containsKey("x") && doc.containsKey("y")) {
+    for (int i = 0; i < _joystickCbCount; i++) {
+      if (pin == _joystickCbs[i].pin && _joystickCbs[i].fn) {
+        float x = doc["x"].as<float>();
+        float y = doc["y"].as<float>();
+        _joystickCbs[i].fn(x, y);
+        return;
+      }
+    }
   }
 
-  Serial.println("[MQTT] Pin: " + pin + ", Value: " + String(value));
-
-  // Check button callbacks first (for bool conversion)
-  for (int i = 0; i < buttonCallbackCount; i++)
-  {
-    if (buttonCallbacks[i].pin == pin && buttonCallbacks[i].callback)
-    {
-      buttonCallbacks[i].callback(value > 0);
+  // Bool callbacks (Button, Switch)
+  for (int i = 0; i < _boolCbCount; i++) {
+    if (pin == _boolCbs[i].pin && _boolCbs[i].fn) {
+      _boolCbs[i].fn(value > 0.0f);
       return;
     }
   }
 
-  // Find regular float callback
-  for (int i = 0; i < pinCallbackCount; i++)
-  {
-    if (pinCallbacks[i].pin == pin && pinCallbacks[i].callback)
-    {
-      pinCallbacks[i].callback(value);
-      break;
+  // Float callbacks (Slider, Timer, Value Display, etc.)
+  for (int i = 0; i < _floatCbCount; i++) {
+    if (pin == _floatCbs[i].pin && _floatCbs[i].fn) {
+      _floatCbs[i].fn(value);
+      return;
     }
   }
 }
 
-/**
- * @brief Connect to MQTT
- */
-bool connectMQTT(const char *authTokenParam, const char *blueprintIdParam, const char *clientKey, const char *secretKey)
-{
-  authToken = String(authTokenParam);
-  blueprintId = String(blueprintIdParam);
+// ─────────────────────────────────────────────────────────────────────────────
+// Public API
+// ─────────────────────────────────────────────────────────────────────────────
 
-  Serial.println("[MQTT] Connecting to " + String(MQTT_SERVER));
+bool connectMQTT(const char* authTokenParam, const char* blueprintIdParam,
+                 const char* clientKey,       const char* secretKey) {
+  _authToken   = String(authTokenParam   ? authTokenParam   : "");
+  _blueprintId = String(blueprintIdParam ? blueprintIdParam : "");
 
-  mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
-  mqttClient.setCallback(mqttCallback);
-  mqttClient.setKeepAlive(MQTT_KEEPALIVE);
-  mqttClient.setBufferSize(MQTT_MAX_PACKET_SIZE); // CRITICAL: Required for LWT with long credentials
-  Serial.println("[MQTT] Buffer size: " + String(MQTT_MAX_PACKET_SIZE) + " bytes");
+  TL_LOG("[MQTT] Connecting to " MQTT_SERVER ":" + String(MQTT_PORT));
 
-  // Use client ID extracted from clientKey (first 40 chars before '-')
-  // This matches Flutter's approach and may be required by broker
-  String clientId = "ThingsLinker_" + getChipID();
+  _wifiClient.setInsecure();
+  _mqtt.setServer(MQTT_SERVER, MQTT_PORT);
+  _mqtt.setCallback(onMqttMessage);
+  _mqtt.setKeepAlive(MQTT_KEEPALIVE);
+  _mqtt.setBufferSize(MQTT_MAX_PACKET_SIZE);
 
-  Serial.println("[MQTT] Client ID: " + clientId);
+  String clientId   = "ThingsLinker_" + getChipID();
+  String statusTopic = "device/status/" + _blueprintId + "/" + _authToken + "/";
 
-  // Prepare status topic: device/status/{BlueprintId}/{AuthToken}/
-  String statusTopic = "device/status/" + blueprintId + "/" + authToken + "/";
-  Serial.println("[MQTT] Status topic: " + statusTopic);
+  TL_LOG("[MQTT] Client ID: " + clientId);
+  TL_LOG("[MQTT] Status topic: " + statusTopic);
 
-  // Connect with Last Will and Testament (LWT)
-  // When device disconnects unexpectedly, broker will publish "OFFLINE" automatically
-  bool connected;
-  if (strlen(clientKey) > 0 && strlen(secretKey) > 0)
-  {
-    // Connect with authentication + LWT (production)
-    Serial.println("[MQTT] Connecting with authentication + LWT...");
-    connected = mqttClient.connect(
-      clientId.c_str(),           // Client ID
-      clientKey,                  // Username
-      secretKey,                  // Password
-      statusTopic.c_str(),        // Will topic
-      0,                          // Will QoS (1 = At least once) - Changed from 2 for broker compatibility
-      true,                       // Will retain (true = retained message)
-      "OFFLINE"                   // Will message (published when device disconnects)
+  bool ok;
+  bool hasAuth = (clientKey && clientKey[0] != '\0') &&
+                 (secretKey && secretKey[0] != '\0');
+
+  if (hasAuth) {
+    TL_LOG("[MQTT] Authenticating...");
+    ok = _mqtt.connect(
+      clientId.c_str(),
+      clientKey,
+      secretKey,
+      statusTopic.c_str(), 0, true, "OFFLINE"
     );
-  }
-  else
-  {
-    // Connect without authentication + LWT (testing with HiveMQ)
-    Serial.println("[MQTT] Connecting without authentication (test mode) + LWT...");
-    connected = mqttClient.connect(
-        clientId.c_str(),    // Client ID
-        statusTopic.c_str(), // Will topic
-        0,                   // Will QoS (1 = At least once) - Changed from 2 for broker compatibility
-        true,                // Will retain
-        "OFFLINE"            // Will message
+  } else {
+    TL_LOG("[MQTT] Connecting anonymously...");
+    ok = _mqtt.connect(
+      clientId.c_str(),
+      statusTopic.c_str(), 0, true, "OFFLINE"
     );
   }
 
-  if (connected)
-  {
-    Serial.println("[MQTT] ✓ Connected!");
-
-    // Immediately publish ONLINE status (retained)
-    // This replaces the LWT message until device disconnects
-    mqttClient.publish(statusTopic.c_str(), "ONLINE", true);
-    Serial.println("[MQTT] ✓ Published ONLINE status");
-
-    return true;
-  }
-  else
-  {
-    Serial.println("[MQTT] ✗ Connection failed");
-    int state = mqttClient.state();
-    Serial.println("[MQTT] State: " + String(state));
-
-    // Detailed error description
-    switch (state)
-    {
-    case -4:
-      Serial.println("[MQTT] Error: Connection timeout - Server didn't respond");
-      break;
-    case -3:
-      Serial.println("[MQTT] Error: Connection lost - Network broken");
-      break;
-    case -2:
-      Serial.println("[MQTT] Error: Connect failed - Network unreachable");
-      break;
-    case -1:
-      Serial.println("[MQTT] Error: AUTHENTICATION FAILED - Wrong username/password");
-      Serial.println("[MQTT] → Check if MQTT broker is configured with these credentials");
-      Serial.println("[MQTT] → Or broker may not be running at " + String(MQTT_SERVER));
-      break;
-    case 1:
-      Serial.println("[MQTT] Error: Bad protocol version");
-      break;
-    case 2:
-      Serial.println("[MQTT] Error: Client ID rejected");
-      break;
-    case 3:
-      Serial.println("[MQTT] Error: Server unavailable");
-      break;
-    case 4:
-      Serial.println("[MQTT] Error: Bad username or password");
-      break;
-    case 5:
-      Serial.println("[MQTT] Error: Not authorized");
-      break;
-    default:
-      Serial.println("[MQTT] Error: Unknown error code");
+  if (!ok) {
+    int state = _mqtt.state();
+    TL_LOG("[MQTT] ✗ Failed — state: " + String(state));
+    switch (state) {
+      case -4: TL_LOG("[MQTT]   Connection timeout"); break;
+      case -3: TL_LOG("[MQTT]   Connection lost");   break;
+      case -2: TL_LOG("[MQTT]   Connect failed");    break;
+      case -1: TL_LOG("[MQTT]   Auth failed — check client key / secret key"); break;
+      case  1: TL_LOG("[MQTT]   Bad protocol version"); break;
+      case  2: TL_LOG("[MQTT]   Client ID rejected"); break;
+      case  3: TL_LOG("[MQTT]   Server unavailable"); break;
+      case  4: TL_LOG("[MQTT]   Bad username or password"); break;
+      case  5: TL_LOG("[MQTT]   Not authorized"); break;
     }
-
     return false;
   }
+
+  TL_LOG("[MQTT] ✓ Connected!");
+
+  // Publish ONLINE status immediately (retained so dashboard sees it instantly)
+  _mqtt.publish(statusTopic.c_str(), "ONLINE", true);
+  TL_LOG("[MQTT] ✓ Status → ONLINE");
+
+  // Re-subscribe all registered callbacks (required after every reconnect)
+  for (int i = 0; i < _boolCbCount; i++) {
+    String topic = buildTopic(_boolCbs[i].widgetType, _boolCbs[i].pin);
+    _mqtt.subscribe(topic.c_str(), 1);
+    TL_LOG("[MQTT] ✓ Subscribed: " + topic);
+  }
+  for (int i = 0; i < _floatCbCount; i++) {
+    String topic = buildTopic(_floatCbs[i].widgetType, _floatCbs[i].pin);
+    _mqtt.subscribe(topic.c_str(), 1);
+    TL_LOG("[MQTT] ✓ Subscribed: " + topic);
+  }
+  for (int i = 0; i < _rgbCbCount; i++) {
+    String topic = buildTopic("RGB", _rgbCbs[i].pin);
+    _mqtt.subscribe(topic.c_str(), 1);
+    TL_LOG("[MQTT] ✓ Subscribed: " + topic);
+  }
+  for (int i = 0; i < _joystickCbCount; i++) {
+    String topic = buildTopic("Joystick", _joystickCbs[i].pin);
+    _mqtt.subscribe(topic.c_str(), 1);
+    TL_LOG("[MQTT] ✓ Subscribed: " + topic);
+  }
+
+  return true;
 }
 
-/**
- * @brief Disconnect from MQTT
- */
-void disconnectMQTT()
-{
-  if (mqttClient.connected())
-  {
-    mqttClient.disconnect();
-    Serial.println("[MQTT] Disconnected");
+void disconnectMQTT() {
+  if (_mqtt.connected()) {
+    _mqtt.disconnect();
+    TL_LOG("[MQTT] Disconnected");
   }
 }
 
-/**
- * @brief Check if MQTT is connected
- */
-bool isMQTTConnected()
-{
-  return mqttClient.connected();
+bool isMQTTConnected() {
+  return _mqtt.connected();
 }
 
-/**
- * @brief Subscribe to a pin
- */
-void subscribeMQTT(const char *widgetType, const char *pin, void (*callback)(float value))
-{
-  if (pinCallbackCount >= 125)
-  {
-    Serial.println("[MQTT] Max pins reached (125 max)");
+void subscribeMQTT(const char* widgetType, const char* pin, void (*callback)(float)) {
+  if (_floatCbCount >= MAX_SUBSCRIPTIONS) {
+    TL_LOG("[MQTT] ✗ Subscription limit reached (" + String(MAX_SUBSCRIPTIONS) + ")");
     return;
   }
 
-  // Save callback
-  pinCallbacks[pinCallbackCount].pin = String(pin);
-  pinCallbacks[pinCallbackCount].widgetType = String(widgetType);
-  pinCallbacks[pinCallbackCount].callback = callback;
-  pinCallbackCount++;
+  FloatCallback& cb = _floatCbs[_floatCbCount++];
+  strncpy(cb.pin,        pin,        sizeof(cb.pin)        - 1);
+  strncpy(cb.widgetType, widgetType, sizeof(cb.widgetType) - 1);
+  cb.pin[sizeof(cb.pin) - 1]               = '\0';
+  cb.widgetType[sizeof(cb.widgetType) - 1] = '\0';
+  cb.fn = callback;
 
-  // Subscribe to topic: device/{WidgetType}/{BlueprintId}/{AuthToken}/{VirtualPin}/
-  if (mqttClient.connected())
-  {
-    String topic = "device/" + String(widgetType) + "/" + blueprintId + "/" + authToken + "/" + String(pin) + "/";
-    bool success = mqttClient.subscribe(topic.c_str(), 1);
-
-    if (success)
-    {
-      Serial.println("[MQTT] ✓ Subscribed: " + topic);
-    }
-    else
-    {
-      Serial.println("[MQTT] ✗ Subscribe failed: " + topic);
-    }
+  if (_mqtt.connected()) {
+    String topic = buildTopic(widgetType, pin);
+    bool ok = _mqtt.subscribe(topic.c_str(), 1);
+    TL_LOG(ok ? "[MQTT] ✓ Subscribed: " + topic : "[MQTT] ✗ Subscribe failed: " + topic);
   }
 }
 
-/**
- * @brief Subscribe to button widget (bool callback)
- */
-void subscribeMQTTButton(const char *widgetType, const char *pin, void (*callback)(bool value))
-{
-  if (buttonCallbackCount >= 125)
-  {
-    Serial.println("[MQTT] Max button pins reached (125 max)");
+void subscribeMQTTButton(const char* widgetType, const char* pin, void (*callback)(bool)) {
+  if (_boolCbCount >= MAX_SUBSCRIPTIONS) {
+    TL_LOG("[MQTT] ✗ Subscription limit reached (" + String(MAX_SUBSCRIPTIONS) + ")");
     return;
   }
 
-  // Save button callback
-  buttonCallbacks[buttonCallbackCount].pin = String(pin);
-  buttonCallbacks[buttonCallbackCount].widgetType = String(widgetType);
-  buttonCallbacks[buttonCallbackCount].callback = callback;
-  buttonCallbackCount++;
+  BoolCallback& cb = _boolCbs[_boolCbCount++];
+  strncpy(cb.pin,        pin,        sizeof(cb.pin)        - 1);
+  strncpy(cb.widgetType, widgetType, sizeof(cb.widgetType) - 1);
+  cb.pin[sizeof(cb.pin) - 1]               = '\0';
+  cb.widgetType[sizeof(cb.widgetType) - 1] = '\0';
+  cb.fn = callback;
 
-  // Subscribe to topic: device/{WidgetType}/{BlueprintId}/{AuthToken}/{VirtualPin}/
-  if (mqttClient.connected())
-  {
-    String topic = "device/" + String(widgetType) + "/" + blueprintId + "/" + authToken + "/" + String(pin) + "/";
-    bool success = mqttClient.subscribe(topic.c_str(), 1);
-
-    if (success)
-    {
-      Serial.println("[MQTT] ✓ Subscribed (Button): " + topic);
-    }
-    else
-    {
-      Serial.println("[MQTT] ✗ Subscribe failed: " + topic);
-    }
+  if (_mqtt.connected()) {
+    String topic = buildTopic(widgetType, pin);
+    bool ok = _mqtt.subscribe(topic.c_str(), 1);
+    TL_LOG(ok ? "[MQTT] ✓ Subscribed: " + topic : "[MQTT] ✗ Subscribe failed: " + topic);
   }
 }
 
-/**
- * @brief Publish value to a pin
- */
-void publishMQTT(const char *widgetType, const char *pin, float value)
-{
-  if (!mqttClient.connected())
-  {
-    // Silently fail - reconnection is handled by checkConnections()
+void subscribeRGBMQTT(const char* pin, void (*callback)(uint8_t r, uint8_t g, uint8_t b, bool on, uint16_t count, const char* pattern)) {
+  if (_rgbCbCount >= MAX_SUBSCRIPTIONS) {
+    TL_LOG("[MQTT] ✗ Subscription limit reached");
     return;
   }
+  RGBCallback& cb = _rgbCbs[_rgbCbCount++];
+  strncpy(cb.pin, pin, sizeof(cb.pin) - 1);
+  cb.pin[sizeof(cb.pin) - 1] = '\0';
+  cb.fn = callback;
 
-  // Build topic: device/{WidgetType}/{BlueprintId}/{AuthToken}/{VirtualPin}/
-  String topic = "device/" + String(widgetType) + "/" + blueprintId + "/" + authToken + "/" + String(pin) + "/";
+  if (_mqtt.connected()) {
+    String topic = buildTopic("RGB", pin);
+    bool ok = _mqtt.subscribe(topic.c_str(), 1);
+    TL_LOG(ok ? "[MQTT] ✓ Subscribed: " + topic : "[MQTT] ✗ Subscribe failed: " + topic);
+  }
+}
 
-  // Build payload
+void subscribeJoystickMQTT(const char* pin, void (*callback)(float x, float y)) {
+  if (_joystickCbCount >= MAX_SUBSCRIPTIONS) {
+    TL_LOG("[MQTT] ✗ Subscription limit reached");
+    return;
+  }
+  JoystickCallback& cb = _joystickCbs[_joystickCbCount++];
+  strncpy(cb.pin, pin, sizeof(cb.pin) - 1);
+  cb.pin[sizeof(cb.pin) - 1] = '\0';
+  cb.fn = callback;
+
+  if (_mqtt.connected()) {
+    String topic = buildTopic("Joystick", pin);
+    bool ok = _mqtt.subscribe(topic.c_str(), 1);
+    TL_LOG(ok ? "[MQTT] ✓ Subscribed: " + topic : "[MQTT] ✗ Subscribe failed: " + topic);
+  }
+}
+
+void publishMQTT(const char* widgetType, const char* pin, float value) {
+  if (!_mqtt.connected()) return;  // Reconnection handled by checkConnections()
+
+  String topic = buildTopic(widgetType, pin);
+
+  // Build standard ThingsLinker payload: {"v": <float>, "t": <unix_timestamp>}
   StaticJsonDocument<128> doc;
   doc["v"] = value;
-  doc["t"] = millis() / 1000;
+  doc["t"] = getTimestamp();
 
-  String payload;
-  serializeJson(doc, payload);
+  char payload[96];
+  serializeJson(doc, payload, sizeof(payload));
 
-  // Publish
-  bool success = mqttClient.publish(topic.c_str(), payload.c_str(), false);
-
-  if (success)
-  {
-    Serial.println("[MQTT] ✓ Published " + String(pin) + ": " + String(value));
-  }
-  else
-  {
-    Serial.println("[MQTT] ✗ Publish failed");
-  }
+  bool ok = _mqtt.publish(topic.c_str(), payload, false);
+  TL_LOG(ok ? "[MQTT] ✓ " + String(pin) + " = " + String(value)
+            : "[MQTT] ✗ Publish failed (" + String(pin) + ")");
 }
 
-/**
- * @brief Process MQTT messages
- */
-void loopMQTT()
-{
-  if (mqttClient.connected())
-  {
-    mqttClient.loop();
-  }
-  // Note: Reconnection is handled by ThingsLinker::checkConnections()
-  // Online/Offline status is managed by MQTT LWT (Last Will and Testament)
+void publishMQTTMap(const char* pin, float lat, float lng) {
+  if (!_mqtt.connected()) return;
+
+  String topic = buildTopic("Map", pin);
+
+  // App parseLoc() looks for "lat" and "lng" fields in the payload object.
+  // Include "v" as well (= latitude) to stay compatible with the standard payload schema.
+  StaticJsonDocument<128> doc;
+  doc["v"]   = lat;
+  doc["lat"] = lat;
+  doc["lng"] = lng;
+  doc["t"]   = getTimestamp();
+
+  char payload[96];
+  serializeJson(doc, payload, sizeof(payload));
+
+  bool ok = _mqtt.publish(topic.c_str(), payload, false);
+  TL_LOG(ok ? "[MQTT] ✓ Map " + String(pin) + " lat=" + String(lat) + " lng=" + String(lng)
+            : "[MQTT] ✗ Map publish failed (" + String(pin) + ")");
 }
 
-/**
- * @brief Get chip ID
- */
-String getChipID()
-{
+void loopMQTT() {
+  if (_mqtt.connected()) {
+    _mqtt.loop();
+  }
+  // Note: reconnection is handled externally by ThingsLinker::checkConnections()
+}
+
+String getChipID() {
 #ifdef ESP32
-  uint64_t chipid = ESP.getEfuseMac();
-  char chipIdStr[13];
-  sprintf(chipIdStr, "%04X%08X", (uint16_t)(chipid >> 32), (uint32_t)chipid);
-  return String(chipIdStr);
+  uint64_t mac = ESP.getEfuseMac();
+  char buf[13];
+  snprintf(buf, sizeof(buf), "%04X%08X",
+           (uint16_t)(mac >> 32), (uint32_t)mac);
+  return String(buf);
 #elif defined(ESP8266)
   return String(ESP.getChipId(), HEX);
 #else

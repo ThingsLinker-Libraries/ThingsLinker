@@ -35,10 +35,10 @@ void setup() {
   Serial.println("  READY FOR APP CONNECTION");
   Serial.println("========================================");
   Serial.println("1. Open ThingsLinker app");
-  Serial.println("2. Go to Devices → Add New Device");
-  Serial.println("3. Scan QR code or enter barcode");
-  Serial.println("4. Enter WiFi credentials");
-  Serial.println("5. Select this device from BLE list");
+  Serial.println("2. Scan for BLE devices");
+  Serial.println("3. Select this device from the list");
+  Serial.println("4. Enter your WiFi credentials");
+  Serial.println("5. Device will connect and be ready!");
   Serial.println("========================================\n");
 }
 
