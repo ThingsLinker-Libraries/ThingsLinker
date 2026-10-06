@@ -78,3 +78,14 @@ getBool	KEYWORD2
 hasKey	KEYWORD2
 removeKey	KEYWORD2
 clearAllData	KEYWORD2
+checkOTA	KEYWORD2
+
+#######################################
+# Constants / Enums
+#######################################
+
+OTAResult	KEYWORD1
+OTA_NO_UPDATE	LITERAL1
+OTA_SUCCESS	LITERAL1
+OTA_FAILED	LITERAL1
+OTA_ERROR	LITERAL1

@@ -648,7 +648,7 @@ void loop() {
 | `OTA_NO_UPDATE` | No pending update — device is already up to date |
 | `OTA_SUCCESS` | Firmware flashed; `ESP.restart()` was called — never returns to caller |
 | `OTA_FAILED` | Download or flash failed; failure reported to server; will retry |
-| `OTA_ERROR` | Could not reach the server — check `TL_API_SERVER` and WiFi |
+| `OTA_ERROR` | Could not reach the server — check `TL_API_SERVER` (`https://iot.thingslinker.in`) and WiFi |
 
 ### Step-by-Step OTA Workflow
 

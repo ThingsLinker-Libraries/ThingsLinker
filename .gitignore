@@ -1,0 +1,17 @@
+# macOS metadata
+.DS_Store
+**/.DS_Store
+
+# Arduino IDE build output
+**/build/
+**/*.elf
+**/*.map
+**/*.bin
+**/*.merged.bin
+**/*.bootloader.bin
+**/*.partitions.bin
+**/build.options.json
+**/flash_args
+**/sdkconfig
+**/partitions.csv
+**/boot_app0.bin

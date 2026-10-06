@@ -74,7 +74,7 @@ extern bool _tlDebugEnabled;  // Defined in ThingsLinker.cpp
 // Backend URL used for OTA check and status-update HTTP calls (no trailing /).
 //
 // ► Cloud / production (default — no change needed):
-//     https://api.thingslinker.com
+//     https://iot.thingslinker.in
 //
 // ► Self-hosted / local development:
 //   Option A — edit this file once (affects all sketches):
@@ -84,7 +84,7 @@ extern bool _tlDebugEnabled;  // Defined in ThingsLinker.cpp
 //     #define TL_API_SERVER "http://192.168.1.10:8000"
 //     #include <ThingsLinker.h>
 #ifndef TL_API_SERVER
-  #define TL_API_SERVER "http://192.168.1.5:8000"
+  #define TL_API_SERVER "https://iot.thingslinker.in"
 #endif
 
 // ─────────────────────────────────────────────────────────────────────────────

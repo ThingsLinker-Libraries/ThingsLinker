@@ -41,7 +41,7 @@
  *
  * API server
  * ----------
- *  Cloud (default — no change needed): https://api.thingslinker.com
+ *  Cloud (default — no change needed): https://iot.thingslinker.in
  *  Local dev: uncomment the line below and set your server's LAN IP:
  *    #define TL_API_SERVER "http://192.168.1.10:8000"
  *  This must appear BEFORE #include <ThingsLinker.h>.
@@ -55,10 +55,10 @@
 #include <Adafruit_NeoPixel.h>
 
 // ── Device credentials ────────────────────────────────────────────────────────
-#define AUTH_TOKEN   "9a1977dd443b7d1f0ff4cbdaa4cbf05e1376b786dcf1da344d06a0d8df46845f"
-#define BLUEPRINT_ID "BLUEbV7N2u5diuUi"
-#define CLIENT_KEY   ""
-#define SECRET_KEY   ""
+#define AUTH_TOKEN   "YOUR_DEVICE_AUTH_TOKEN"    // ~64 hex characters
+#define BLUEPRINT_ID "YOUR_BLUEPRINT_ID"         // starts with "BLUE"
+#define CLIENT_KEY   "YOUR_CLIENT_KEY"
+#define SECRET_KEY   "YOUR_SECRET_KEY"
 
 // ── Firmware version ──────────────────────────────────────────────────────────
 static const char* FIRMWARE_VERSION = "4.0";
