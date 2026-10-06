@@ -191,6 +191,13 @@ bool   ThingsLinker::removeKey (const char* k)                  { return ::remov
 void   ThingsLinker::clearAllData()                             { ::clearAllData();          }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// OTA
+// ─────────────────────────────────────────────────────────────────────────────
+OTAResult ThingsLinker::checkOTA(const char* apiServer) {
+  return checkAndApplyOTA(_authToken, apiServer);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Advanced
 // ─────────────────────────────────────────────────────────────────────────────
 void ThingsLinker::setBLEName(const char* brandName) {

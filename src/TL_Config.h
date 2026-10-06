@@ -69,6 +69,25 @@ extern bool _tlDebugEnabled;  // Defined in ThingsLinker.cpp
 #define WIFI_SCAN_TIMEOUT    3000
 
 // ─────────────────────────────────────────────────────────────────────────────
+// OTA / REST API server
+// ─────────────────────────────────────────────────────────────────────────────
+// Backend URL used for OTA check and status-update HTTP calls (no trailing /).
+//
+// ► Cloud / production (default — no change needed):
+//     https://api.thingslinker.com
+//
+// ► Self-hosted / local development:
+//   Option A — edit this file once (affects all sketches):
+//     #define TL_API_SERVER "http://192.168.1.10:8000"   // your server LAN IP
+//
+//   Option B — override per-sketch, BEFORE #include <ThingsLinker.h>:
+//     #define TL_API_SERVER "http://192.168.1.10:8000"
+//     #include <ThingsLinker.h>
+#ifndef TL_API_SERVER
+  #define TL_API_SERVER "http://192.168.1.5:8000"
+#endif
+
+// ─────────────────────────────────────────────────────────────────────────────
 // NTP
 // ─────────────────────────────────────────────────────────────────────────────
 // NTP servers used to obtain a real Unix timestamp for MQTT payloads.

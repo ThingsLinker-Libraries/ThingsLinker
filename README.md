@@ -26,6 +26,7 @@ Connect your ESP32 to the ThingsLinker IoT platform in just **3 lines of code**.
 - **125 Virtual Pins** — V0–V124, matching the organisation portal
 - **Persistent Storage** — Save settings to ESP32 flash via `Preferences`
 - **MQTT Last Will** — Automatic online/offline status via retained messages
+- **OTA Updates** — Download and flash new firmware automatically over WiFi
 
 ## Quick Start
 
@@ -573,6 +574,108 @@ void loop() {
 }
 ```
 
+## OTA Firmware Updates
+
+The library supports automatic Over-The-Air firmware updates through the ThingsLinker Org Portal. The device checks the backend periodically; when a shipment is set to **Live**, the firmware is downloaded and flashed automatically — no USB cable needed.
+
+> **Important — Partition Scheme & Bootloader**
+>
+> OTA only works when both the **base firmware** and the **new firmware** are compiled with an OTA-capable partition scheme. In Arduino IDE go to:
+> **Tools → Partition Scheme → Default with OTA (1.3MB APP / 1.5MB SPIFFS)**
+> (or any scheme that includes two OTA app partitions — OTA\_0 and OTA\_1)
+>
+> - The bootloader is written once when you first flash via USB. After that, OTA updates only replace the app partition — the bootloader and partition table are never touched.
+> - If you accidentally compile the new `.bin` with a **different** partition scheme (e.g. "No OTA" or "Huge APP"), the flash will appear to succeed but the device will crash on reboot.
+> - If you ever change the partition scheme, you must re-flash the device via USB — OTA cannot update the partition table.
+> - **Always use the same partition scheme for every sketch you upload to a device**, including the initial base firmware and every subsequent OTA binary.
+>
+> **The library performs two automatic pre-flash checks before writing a single byte:**
+> 1. **OTA partition check** — calls `esp_ota_get_next_update_partition()`. If it returns `NULL`, the device has no OTA slot (wrong partition scheme) and the update is aborted immediately with a clear Serial message telling you to re-flash via USB.
+> 2. **Size check** — compares the firmware file size from the server against the actual OTA partition size. If the new binary is too large (typically because it was compiled with a different scheme), the update is aborted before any bytes are written.
+>
+> Both failures are reported back to the Org Portal as `failed` with a descriptive error message, so you can see exactly what went wrong in **OTA → Shipments**.
+
+### Org Portal Setup
+
+1. **OTA → New Shipping** — upload your compiled `.bin` and enter a firmware version (e.g. `2.0`)
+2. **Set shipment status → Live** — devices detect this on their next `checkOTA()` call
+3. Monitor real-time progress in **OTA → Shipments** (pending / in progress / completed / failed per device)
+
+### Basic OTA Sketch
+
+```cpp
+#include <ThingsLinker.h>
+
+ThingsLinker iot("YOUR_AUTH_TOKEN", "YOUR_BLUEPRINT_ID");
+
+static const char*    FIRMWARE_VERSION = "1.0";
+static unsigned long  _lastOtaCheck    = 0;
+const  unsigned long  OTA_INTERVAL_MS  = 60000UL;  // check every 60 s
+
+void setup() {
+  Serial.begin(115200);
+  iot.begin("YOUR_CLIENT_KEY", "YOUR_SECRET_KEY");
+}
+
+void loop() {
+  iot.run();
+
+  if (iot.wifiConnected() && millis() - _lastOtaCheck >= OTA_INTERVAL_MS) {
+    _lastOtaCheck = millis();
+    Serial.println("[OTA] Checking for update...");
+
+    switch (iot.checkOTA()) {
+      case OTA_NO_UPDATE:
+        Serial.printf("[OTA] v%s — up to date.\n", FIRMWARE_VERSION);
+        break;
+      case OTA_FAILED:
+        Serial.println("[OTA] Flash failed. Will retry next interval.");
+        break;
+      case OTA_ERROR:
+        Serial.println("[OTA] Server unreachable. Check WiFi / API server.");
+        break;
+      case OTA_SUCCESS:
+        break;  // device restarts inside checkOTA() — this line is never reached
+    }
+  }
+}
+```
+
+### OTA Result Codes
+
+| Code | Meaning |
+|------|---------|
+| `OTA_NO_UPDATE` | No pending update — device is already up to date |
+| `OTA_SUCCESS` | Firmware flashed; `ESP.restart()` was called — never returns to caller |
+| `OTA_FAILED` | Download or flash failed; failure reported to server; will retry |
+| `OTA_ERROR` | Could not reach the server — check `TL_API_SERVER` and WiFi |
+
+### Step-by-Step OTA Workflow
+
+```
+[Device v1.0 — 08_OTA_Update]          [Org Portal]
+        │                                     │
+        │  1. upload 11_OTA_TestFirmware.bin  │
+        │     + set shipment Live             │
+        │◄────────────────────────────────────┤
+        │  2. checkOTA() → has_update: true   │
+        │────────────────────────────────────►│ status: in_progress
+        │  3. HTTPUpdate downloads .bin       │
+        │  4. flash + restart                 │
+        │────────────────────────────────────►│ status: completed
+        │                                     │
+[Device v2.0 — NeoPixel RGB running]
+```
+
+### OTA Examples
+
+| Example | Description |
+|---------|-------------|
+| `08_OTA_Update` | Minimal v1.0 base firmware — OTA check loop only |
+| `11_OTA_TestFirmware` | Full v2.0 firmware — NeoPixel RGB + Switch, used as the "new" binary in a shipment |
+
+---
+
 ## Storage API
 
 Persist configuration to ESP32 flash (survives reboot):
@@ -722,17 +825,20 @@ Open via **File → Examples → ThingsLinker**:
 | `06_Multiple_Pins` | Using V0–V124 (125 pins) |
 | `07_All_Widgets_Test` | All widget types — Button, Switch, Slider, RGB, Timer, Joystick, Gauge, Chart, Value Display, Label, LED |
 | `08_ESP32S3_Full_Dashboard` | Full dashboard: NeoPixel RGB, Joystick, Map, Timer, sensors |
+| `08_OTA_Update` | **OTA** — v1.0 base firmware with periodic `checkOTA()` loop |
 | `09_Clear_WiFi` | Erase credentials & re-provision via BLE |
 | `10_Full_Feature_Test` | All publish + subscribe functions with reconnect handling |
+| `11_OTA_TestFirmware` | **OTA** — v2.0 NeoPixel RGB firmware; compile this as the "new" `.bin` for OTA shipments |
 
 ## Library Architecture
 
 ```
 src/
-├── TL_Config.h/        Central config — broker URL, pins, timeouts, debug macro
+├── TL_Config.h         Central config — TL_API_SERVER, broker, pins, timeouts, debug
 ├── TL_BLE.h/.cpp       BLE provisioning (receive WiFi credentials from app)
 ├── TL_WiFi.h/.cpp      WiFi connect, persist, reconnect, NTP init
 ├── TL_MQTT.h/.cpp      TLS MQTT — connect, publish, subscribe, LWT
+├── TL_OTA.h/.cpp       OTA firmware update (HTTP download + flash via HTTPUpdate)
 ├── TL_Storage.h/.cpp   NVS Preferences wrapper
 ├── TL_Base64.h/.cpp    Base64 encode/decode utility
 └── ThingsLinker.h/.cpp Public API — thin wrapper around the above modules
@@ -748,6 +854,12 @@ src/
 | MQTT state -2 (connect failed) | Check internet connectivity and firewall on port 8883 |
 | Timestamps in wrong year | NTP syncs in background — first few payloads may use millis() fallback |
 | Sketch won't compile | Install ArduinoJson and PubSubClient via Library Manager |
+| OTA returns `OTA_ERROR` | Check `TL_API_SERVER` URL in `TL_Config.h`; ensure device has internet access |
+| OTA re-flashes same firmware | Backend auto-corrects stuck `in_progress` records on next `checkOTA()` call |
+| OTA returns `OTA_FAILED` | Check Serial for error message; verify `.bin` is valid and shipment is Live |
+| OTA keeps looping after flash | The device missed reporting completion — fixed automatically on next boot check |
+| Serial: "No OTA partition found" | Base firmware was flashed without OTA partition scheme. Re-flash via USB with Tools → Partition Scheme → Default with OTA |
+| Serial: "Firmware too large for OTA partition" | New `.bin` was compiled with a different partition scheme. Recompile with the same scheme as the base firmware and re-upload the `.bin` to the shipment |
 
 ## License
 

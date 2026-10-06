@@ -41,6 +41,7 @@
 #include "TL_WiFi.h"
 #include "TL_MQTT.h"
 #include "TL_Storage.h"
+#include "TL_OTA.h"
 
 class ThingsLinker {
 public:
@@ -222,6 +223,27 @@ public:
   bool hasKey   (const char* key);   ///< true if key exists
   bool removeKey(const char* key);   ///< Delete a single key
   void clearAllData();               ///< Erase all app data (not WiFi credentials)
+
+  // ── OTA firmware updates ────────────────────────────────────────────────────
+
+  /**
+   * Check for a pending OTA firmware update and apply it if available.
+   *
+   * WiFi must be connected. On success the device restarts automatically.
+   * Call this periodically (e.g. every 60 s) inside loop() after iot.run().
+   *
+   * @param apiServer  Backend base URL, no trailing slash.
+   *                   Defaults to TL_API_SERVER defined in TL_Config.h.
+   *                   Override per-call: iot.checkOTA("http://192.168.1.10:8000")
+   * @return OTAResult  (OTA_NO_UPDATE / OTA_SUCCESS / OTA_FAILED / OTA_ERROR)
+   *
+   * Example:
+   *   if (iot.wifiConnected()) {
+   *     OTAResult r = iot.checkOTA();
+   *     if (r == OTA_FAILED) Serial.println("OTA failed — will retry.");
+   *   }
+   */
+  OTAResult checkOTA(const char* apiServer = TL_API_SERVER);
 
   // ── Advanced ────────────────────────────────────────────────────────────────
 
