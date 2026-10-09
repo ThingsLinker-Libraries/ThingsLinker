@@ -51,6 +51,18 @@ extern bool _tlDebugEnabled;  // Defined in ThingsLinker.cpp
 #define MAX_SUBSCRIPTIONS 20
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GSM modem — PWRKEY
+// ─────────────────────────────────────────────────────────────────────────────
+// Pass this value as the pwrPin argument to ThingsLinkerGSM::begin() when your
+// board does NOT have PWRKEY wired to an ESP32 GPIO (e.g. PWRKEY is tied to VCC
+// and the modem powers on automatically when power is applied).
+//
+//   iot.begin(CLIENT_KEY, SECRET_KEY, APN, TL_NO_PWRKEY);
+//   iot.begin(CLIENT_KEY, SECRET_KEY, APN, 4);             // GPIO 4 controls PWRKEY
+//
+#define TL_NO_PWRKEY -1
+
+// ─────────────────────────────────────────────────────────────────────────────
 // BLE provisioning
 // ─────────────────────────────────────────────────────────────────────────────
 #define BLE_SERVICE_UUID       "4fafc201-1fb5-459e-8fcc-c5c9c331914b"

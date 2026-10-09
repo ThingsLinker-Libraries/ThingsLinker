@@ -11,48 +11,59 @@
 
 # ThingsLinker — Arduino Library for ESP32
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/thingslinker/arduino-library)
+[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/Thingslinker-Organization/ThingsLinker-Arduino-Library)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-ESP32-orange.svg)](https://www.espressif.com/en/products/socs/esp32)
 
 Connect your ESP32 to the ThingsLinker IoT platform in just **3 lines of code**.
 
-## Features
+Two variants in one library:
 
-- **BLE Provisioning** — Configure WiFi from the mobile app, no hardcoded passwords
-- **Auto WiFi & MQTT** — Connects on boot, auto-reconnects on drop
-- **TLS MQTT** — Encrypted connection to `mqtt.thingslinker.com:8883`
-- **NTP Timestamps** — Accurate Unix timestamps on every telemetry payload
-- **125 Virtual Pins** — V0–V124, matching the organisation portal
-- **Persistent Storage** — Save settings to ESP32 flash via `Preferences`
-- **MQTT Last Will** — Automatic online/offline status via retained messages
-- **OTA Updates** — Download and flash new firmware automatically over WiFi
+| Variant | Class | Connectivity | Use when |
+|---------|-------|-------------|----------|
+| **WiFi** | `ThingsLinker` | WiFi (BLE provisioning) | Device is near a router |
+| **GSM** | `ThingsLinkerGSM` | 4G LTE via Simcom A7672 | Device is mobile or remote |
 
-## Quick Start
+Both use the **exact same widget API** — `gauge()`, `onSwitch()`, `run()` etc. work identically in both.
 
-### 1. Install Dependencies
+---
 
-Via Arduino Library Manager:
+## Table of Contents
+
+- [WiFi Variant — ThingsLinker](#wifi-variant--thingslinker)
+  - [Quick Start](#quick-start-wifi)
+  - [Widget Examples (WiFi)](#widget-examples-wifi)
+- [GSM Variant — ThingsLinkerGSM](#gsm-variant--thingslinkergsmm)
+  - [Quick Start (GSM)](#quick-start-gsm)
+  - [Widget Examples (GSM)](#widget-examples-gsm)
+  - [GPS Tracker](#gps-tracker)
+- [OTA Firmware Updates](#ota-firmware-updates)
+- [Storage API](#storage-api)
+- [Quick Reference](#quick-reference)
+- [Troubleshooting](#troubleshooting)
+
+---
+
+## WiFi Variant — ThingsLinker
+
+### Quick Start (WiFi)
+
+**Step 1 — Install dependencies** (Arduino Library Manager):
 - **ArduinoJson** ≥ 6.x
 - **PubSubClient** ≥ 2.8
 
-### 2. Get Your Credentials
-
-Log in to the ThingsLinker organisation portal:
+**Step 2 — Get your credentials** from the Organisation Portal:
 `Blueprints → [Blueprint] → Devices → [Device]`
+- **Auth Token** — long hex string
+- **Blueprint Key** — starts with `BLUE`
+- **Client Key** and **Secret Key**
 
-Copy:
-- **Device Auth Token** — `~64 hex characters`
-- **Blueprint ID** — starts with `BLUE`, e.g. `BLUExxxxxxxxxx`
-- **Client Key** — starts with `client-`
-- **Secret Key** — starts with `secret-`
-
-### 3. Upload Your Sketch
+**Step 3 — Upload:**
 
 ```cpp
 #include <ThingsLinker.h>
 
-ThingsLinker iot("YOUR_AUTH_TOKEN", "YOUR_BLUEPRINT_ID");
+ThingsLinker iot("YOUR_AUTH_TOKEN", "YOUR_BLUEPRINT_KEY");
 
 void setup() {
   Serial.begin(115200);
@@ -64,25 +75,19 @@ void loop() {
 }
 ```
 
-**First boot:** BLE starts automatically. Open the ThingsLinker app, find your device, and enter WiFi credentials.
-**All subsequent boots:** Device connects to WiFi and MQTT automatically in seconds.
-
-## Widget Examples
-
-Each example below is complete — copy, paste, fill in your credentials, and upload.
+**First boot:** BLE starts automatically. Open the ThingsLinker app → find your device → enter WiFi credentials.
+**Every boot after:** Connects to WiFi and MQTT automatically.
 
 ---
 
-### Gauge Widget
+### Widget Examples (WiFi)
 
-Send a numeric value to the Gauge widget in the app (temperature, humidity, voltage, etc.).
-
-App widget: **Gauge** on pin `V0`
+#### Gauge — Send a sensor value
 
 ```cpp
 #include <ThingsLinker.h>
 
-ThingsLinker iot("YOUR_AUTH_TOKEN", "YOUR_BLUEPRINT_ID");
+ThingsLinker iot("YOUR_AUTH_TOKEN", "YOUR_BLUEPRINT_KEY");
 
 void setup() {
   Serial.begin(115200);
@@ -92,283 +97,54 @@ void setup() {
 void loop() {
   iot.run();
 
-  static unsigned long lastSend = 0;
-  if (millis() - lastSend >= 3000) {
-    lastSend = millis();
+  static unsigned long last = 0;
+  if (millis() - last >= 3000) {
+    last = millis();
 
-    float temperature = 25.0 + random(-50, 50) / 10.0;  // simulated sensor
-    iot.gauge("V0", temperature);
-
-    Serial.println("Temperature: " + String(temperature) + " °C");
+    float temperature = 25.0;          // replace with real sensor
+    iot.gauge("V1", temperature);      // → Gauge widget on V1
   }
 }
 ```
 
 ---
 
-### Chart Widget
-
-Send data points to the Chart widget. The app stores history and draws a live graph.
-
-App widget: **Chart** on pin `V0`
+#### Chart — Live graph with history
 
 ```cpp
-#include <ThingsLinker.h>
-
-ThingsLinker iot("YOUR_AUTH_TOKEN", "YOUR_BLUEPRINT_ID");
-
-void setup() {
-  Serial.begin(115200);
-  iot.begin("YOUR_CLIENT_KEY", "YOUR_SECRET_KEY");
-}
-
 void loop() {
   iot.run();
 
-  static unsigned long lastSend = 0;
-  if (millis() - lastSend >= 5000) {
-    lastSend = millis();
+  static unsigned long last = 0;
+  if (millis() - last >= 5000) {
+    last = millis();
 
-    float humidity = 60.0 + random(-100, 100) / 10.0;  // simulated sensor
-    iot.chart("V0", humidity);
-
-    Serial.println("Humidity: " + String(humidity) + " %");
+    float humidity = 60.0;             // replace with real sensor
+    iot.chart("V1", humidity);         // → Chart widget on V1
   }
 }
 ```
 
 ---
 
-### Value Display Widget
-
-Send a value to the Value Display widget (shows a large number in the app).
-
-App widget: **Value Display** on pin `V0`
+#### Switch — App controls a relay
 
 ```cpp
 #include <ThingsLinker.h>
 
-ThingsLinker iot("YOUR_AUTH_TOKEN", "YOUR_BLUEPRINT_ID");
-
-void setup() {
-  Serial.begin(115200);
-  iot.begin("YOUR_CLIENT_KEY", "YOUR_SECRET_KEY");
-}
-
-void loop() {
-  iot.run();
-
-  static unsigned long lastSend = 0;
-  if (millis() - lastSend >= 3000) {
-    lastSend = millis();
-
-    float pressure = 1013.0 + random(-30, 30) / 10.0;  // simulated sensor
-    iot.display("V0", pressure);
-
-    Serial.println("Pressure: " + String(pressure) + " hPa");
-  }
-}
-```
-
----
-
-### Label Widget
-
-Send a value to the Label widget (displays text + number in the app).
-
-App widget: **Label** on pin `V0`
-
-```cpp
-#include <ThingsLinker.h>
-
-ThingsLinker iot("YOUR_AUTH_TOKEN", "YOUR_BLUEPRINT_ID");
-
-void setup() {
-  Serial.begin(115200);
-  iot.begin("YOUR_CLIENT_KEY", "YOUR_SECRET_KEY");
-}
-
-void loop() {
-  iot.run();
-
-  static unsigned long lastSend = 0;
-  if (millis() - lastSend >= 3000) {
-    lastSend = millis();
-
-    float voltage = 3.3 + random(-10, 10) / 100.0;  // simulated sensor
-    iot.label("V0", voltage);
-
-    Serial.println("Voltage: " + String(voltage) + " V");
-  }
-}
-```
-
----
-
-### LED Widget (Device → App)
-
-Control the LED widget state in the app from the device (e.g. show a sensor alarm).
-
-App widget: **LED** on pin `V0`
-
-```cpp
-#include <ThingsLinker.h>
-
-ThingsLinker iot("YOUR_AUTH_TOKEN", "YOUR_BLUEPRINT_ID");
-
-#define LED_PIN 2
-
-void setup() {
-  Serial.begin(115200);
-  pinMode(LED_PIN, OUTPUT);
-  iot.begin("YOUR_CLIENT_KEY", "YOUR_SECRET_KEY");
-}
-
-void loop() {
-  iot.run();
-
-  static unsigned long lastSend = 0;
-  if (millis() - lastSend >= 3000) {
-    lastSend = millis();
-
-    bool alarmOn = (random(0, 10) > 7);    // simulate alarm condition
-    iot.led("V0", alarmOn);                 // update LED widget in app
-    digitalWrite(LED_PIN, alarmOn ? HIGH : LOW);
-
-    Serial.println("Alarm: " + String(alarmOn ? "ON" : "OFF"));
-  }
-}
-```
-
----
-
-### Map Widget
-
-Send GPS coordinates to the Map widget. The app shows your device's location on a map.
-
-App widget: **Map** on pin `V0`
-
-```cpp
-#include <ThingsLinker.h>
-
-ThingsLinker iot("YOUR_AUTH_TOKEN", "YOUR_BLUEPRINT_ID");
-
-void setup() {
-  Serial.begin(115200);
-  iot.begin("YOUR_CLIENT_KEY", "YOUR_SECRET_KEY");
-}
-
-void loop() {
-  iot.run();
-
-  static unsigned long lastSend = 0;
-  if (millis() - lastSend >= 5000) {
-    lastSend = millis();
-
-    // Replace with real GPS values from your GPS module
-    float lat = 23.0225f;
-    float lng = 72.5714f;
-
-    iot.map("V0", lat, lng);
-
-    Serial.printf("Location: %.4f, %.4f\n", lat, lng);
-  }
-}
-```
-
----
-
-### Button Widget (App → Device)
-
-App button controls the built-in LED. When you tap the button in the app, the LED toggles on the device.
-
-App widget: **Button** on pin `V0`
-
-```cpp
-#include <ThingsLinker.h>
-
-ThingsLinker iot("YOUR_AUTH_TOKEN", "YOUR_BLUEPRINT_ID");
-
-#define LED_PIN 2
-
-void setup() {
-  Serial.begin(115200);
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, LOW);
-
-  iot.begin("YOUR_CLIENT_KEY", "YOUR_SECRET_KEY");
-
-  iot.onButton("V0", [](bool pressed) {
-    digitalWrite(LED_PIN, pressed ? HIGH : LOW);
-    Serial.println("Button: LED " + String(pressed ? "ON" : "OFF"));
-  });
-}
-
-void loop() {
-  iot.run();
-}
-```
-
----
-
-### LED Widget (App → Device)
-
-Tap the LED widget in the app to toggle it on/off. The device receives the command and controls a physical output.
-
-App widget: **LED** on pin `V0`
-
-> Do **not** call `iot.led("V0", ...)` inside this callback — it causes an infinite echo loop.
-
-```cpp
-#include <ThingsLinker.h>
-
-ThingsLinker iot("YOUR_AUTH_TOKEN", "YOUR_BLUEPRINT_ID");
-
-#define LED_PIN 2
-
-void setup() {
-  Serial.begin(115200);
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, LOW);
-
-  iot.begin("YOUR_CLIENT_KEY", "YOUR_SECRET_KEY");
-
-  iot.onLED("V0", [](bool on) {
-    digitalWrite(LED_PIN, on ? HIGH : LOW);
-    Serial.println("LED widget: " + String(on ? "ON" : "OFF"));
-  });
-}
-
-void loop() {
-  iot.run();
-}
-```
-
----
-
-### Switch Widget
-
-Toggle switch in the app controls a relay or any on/off output on the device.
-
-App widget: **Switch** on pin `V0`
-
-```cpp
-#include <ThingsLinker.h>
-
-ThingsLinker iot("YOUR_AUTH_TOKEN", "YOUR_BLUEPRINT_ID");
+ThingsLinker iot("YOUR_AUTH_TOKEN", "YOUR_BLUEPRINT_KEY");
 
 #define RELAY_PIN 4
 
 void setup() {
   Serial.begin(115200);
   pinMode(RELAY_PIN, OUTPUT);
-  digitalWrite(RELAY_PIN, LOW);
 
   iot.begin("YOUR_CLIENT_KEY", "YOUR_SECRET_KEY");
 
-  iot.onSwitch("V0", [](bool on) {
+  iot.onSwitch("V1", [](bool on) {          // Switch widget on V1
     digitalWrite(RELAY_PIN, on ? HIGH : LOW);
-    Serial.println("Switch: Relay " + String(on ? "ON" : "OFF"));
+    Serial.println(on ? "Relay ON" : "Relay OFF");
   });
 }
 
@@ -379,32 +155,124 @@ void loop() {
 
 ---
 
-### Slider Widget
-
-Drag the slider in the app to control brightness, speed, or any variable value on the device.
-
-App widget: **Slider** on pin `V0` (set range 0–100 in portal)
+#### Slider — App controls brightness
 
 ```cpp
-#include <ThingsLinker.h>
+iot.onSlider("V1", [](float value) {        // Slider widget on V1 (0–100)
+  int brightness = (int)(value * 2.55f);    // 0–100 → 0–255
+  analogWrite(LED_PIN, brightness);
+});
+```
 
-ThingsLinker iot("YOUR_AUTH_TOKEN", "YOUR_BLUEPRINT_ID");
+---
 
-#define LED_PIN 2
+#### Button — App triggers an action
+
+```cpp
+iot.onButton("V1", [](bool pressed) {       // Button widget on V1
+  if (pressed) {
+    // do something when button is tapped in app
+    Serial.println("Button tapped!");
+  }
+});
+```
+
+---
+
+#### RGB — App controls LED strip color
+
+```cpp
+iot.onRGB("V1", [](uint8_t r, uint8_t g, uint8_t b,
+                    bool on, uint16_t count, const char* pattern) {
+  // r, g, b   = color (0–255 each)
+  // on         = strip on or off
+  // count      = number of LEDs (set in app)
+  // pattern    = effect name e.g. "Solid", "Blink"
+
+  Serial.printf("Color: R%d G%d B%d  On:%s\n", r, g, b, on ? "yes" : "no");
+  // drive your NeoPixel / FastLED strip here
+});
+```
+
+---
+
+#### Joystick — App controls direction
+
+```cpp
+iot.onJoystick("V1", [](float x, float y) {
+  // x: left (−1.0) to right (+1.0)
+  // y: back (−1.0) to forward (+1.0)
+
+  if      (y >  0.5) Serial.println("FORWARD");
+  else if (y < -0.5) Serial.println("BACKWARD");
+  else if (x >  0.5) Serial.println("RIGHT");
+  else if (x < -0.5) Serial.println("LEFT");
+  else               Serial.println("STOP");
+});
+```
+
+---
+
+#### Map — Send GPS location
+
+```cpp
+float lat = 23.0225, lng = 72.5714;   // from your GPS module
+iot.map("V1", lat, lng);              // → Map widget on V1
+```
+
+---
+
+#### LED — Show alarm state in app
+
+```cpp
+bool alarm = (temperature > 35.0);
+iot.led("V1", alarm);                 // → LED widget turns red/green
+```
+
+---
+
+## GSM Variant — ThingsLinkerGSM
+
+Use this when your device needs to work **without WiFi** — on the road, in the field, or anywhere with a 4G signal.
+
+**Required hardware:**
+- ESP32 (any variant)
+- Simcom **A7672SA / A7672E / A7672S** (or SIM7672) 4G LTE modem
+
+**Required library:** Only **ArduinoJson** — no TinyGSM, no PubSubClient needed.
+
+### Wiring
+
+```
+ESP32 GPIO16 (RX2) ──── A7672 TX
+ESP32 GPIO17 (TX2) ──── A7672 RX
+ESP32 GPIO4        ──── A7672 PWRKEY
+External 4V/500mA  ──── A7672 VCC
+GND                ──── A7672 GND
+```
+
+---
+
+### Quick Start (GSM)
+
+```cpp
+#include <ThingsLinkerGSM.h>
+
+ThingsLinkerGSM iot(Serial2, "YOUR_AUTH_TOKEN", "YOUR_BLUEPRINT_KEY");
+
+// ── Option A: PWRKEY wired to a GPIO ─────────────────────────────────────────
+#define MODEM_PWR_PIN  4          // GPIO 4 → A7672 PWRKEY
+
+// ── Option B: PWRKEY not connected (modem powers on automatically) ────────────
+// #define MODEM_PWR_PIN  TL_NO_PWRKEY
 
 void setup() {
   Serial.begin(115200);
-  pinMode(LED_PIN, OUTPUT);
+  Serial2.begin(115200, SERIAL_8N1, 16, 17);    // RX=16, TX=17
 
-  iot.begin("YOUR_CLIENT_KEY", "YOUR_SECRET_KEY");
-
-  iot.onSlider("V0", [](float value) {
-    // value is 0–100 (range you set in portal)
-    int brightness = (int)(value * 2.55f);  // convert to 0–255
-    analogWrite(LED_PIN, brightness);
-
-    Serial.println("Slider: " + String((int)value) + "% brightness");
-  });
+  iot.begin("YOUR_CLIENT_KEY", "YOUR_SECRET_KEY",
+            "airtelgprs.com",   // your SIM card APN
+            MODEM_PWR_PIN);     // pass pin number OR TL_NO_PWRKEY
 }
 
 void loop() {
@@ -412,160 +280,80 @@ void loop() {
 }
 ```
 
+That's it. The library handles modem power-on, network registration, SSL, MQTT connect, and auto-reconnect automatically.
+
+**PWRKEY — which option do I use?**
+
+| Situation | Define |
+|-----------|--------|
+| PWRKEY wired to an ESP32 GPIO (e.g. GPIO 4) | `#define MODEM_PWR_PIN 4` |
+| PWRKEY not connected — modem auto-starts when power is applied | `#define MODEM_PWR_PIN TL_NO_PWRKEY` |
+| PWRKEY tied directly to VCC on the breakout board | `#define MODEM_PWR_PIN TL_NO_PWRKEY` |
+
+**Common APNs:**
+| Carrier | APN |
+|---------|-----|
+| Airtel India | `airtelgprs.com` |
+| Jio India | `jionet` |
+| Vodafone India | `www` |
+| AT&T US | `phone` |
+| T-Mobile US | `fast.t-mobile.com` |
+
 ---
 
-### RGB Widget
+### Widget Examples (GSM)
 
-Pick a color in the app to control an RGB LED strip or any RGB output on the device.
+Every widget function is **identical** to the WiFi variant — just use `ThingsLinkerGSM` instead of `ThingsLinker`.
 
-App widget: **RGB** on pin `V0`
+#### Gauge — Send a sensor reading
 
 ```cpp
-#include <ThingsLinker.h>
-#include <Adafruit_NeoPixel.h>
+#include <ThingsLinkerGSM.h>
 
-ThingsLinker iot("YOUR_AUTH_TOKEN", "YOUR_BLUEPRINT_ID");
-
-#define PIXEL_PIN   5
-#define PIXEL_COUNT 8
-
-Adafruit_NeoPixel strip(PIXEL_COUNT, PIXEL_PIN, NEO_GRB + NEO_KHZ800);
+ThingsLinkerGSM iot(Serial2, "YOUR_AUTH_TOKEN", "YOUR_BLUEPRINT_KEY");
 
 void setup() {
   Serial.begin(115200);
-  strip.begin();
-  strip.show();
-
-  iot.begin("YOUR_CLIENT_KEY", "YOUR_SECRET_KEY");
-
-  // Payload: {"v":1,"r":0,"g":255,"b":204,"status":"ON","count":50,"pattern":"Solid","t":...}
-  iot.onRGB("V0", [](uint8_t r, uint8_t g, uint8_t b, bool on, uint16_t count, const char* pattern) {
-    // count   = number of LEDs set in the app (1–300)
-    // pattern = effect name, e.g. "Solid", "Blink" (or "" if not sent)
-    strip.clear();
-    if (on) {
-      strip.fill(strip.Color(r, g, b), 0, count);
-    }
-    strip.show();
-
-    Serial.printf("RGB: R=%d G=%d B=%d  On=%s  Count=%d  Pattern=%s\n",
-                  r, g, b, on ? "YES" : "NO", count, pattern);
-  });
+  Serial2.begin(115200, SERIAL_8N1, 16, 17);
+  iot.begin("YOUR_CLIENT_KEY", "YOUR_SECRET_KEY", "airtelgprs.com", 4);
 }
 
 void loop() {
   iot.run();
+
+  static unsigned long last = 0;
+  if (millis() - last >= 5000) {
+    last = millis();
+
+    float temperature = 28.5;          // replace with real sensor
+    iot.gauge("V1", temperature);      // → Gauge widget on V1
+
+    Serial.println("Sent: " + String(temperature) + " °C");
+  }
 }
 ```
 
 ---
 
-### Timer Widget
-
-The app counts down and sends the remaining seconds to the device. Use it to trigger actions at zero.
-
-App widget: **Timer** on pin `V0`
+#### Switch — App controls a relay over 4G
 
 ```cpp
-#include <ThingsLinker.h>
+#include <ThingsLinkerGSM.h>
 
-ThingsLinker iot("YOUR_AUTH_TOKEN", "YOUR_BLUEPRINT_ID");
+ThingsLinkerGSM iot(Serial2, "YOUR_AUTH_TOKEN", "YOUR_BLUEPRINT_KEY");
 
-#define BUZZER_PIN 4
+#define RELAY_PIN 26
 
 void setup() {
   Serial.begin(115200);
-  pinMode(BUZZER_PIN, OUTPUT);
-  digitalWrite(BUZZER_PIN, LOW);
-
-  iot.begin("YOUR_CLIENT_KEY", "YOUR_SECRET_KEY");
-
-  iot.onTimer("V0", [](float seconds) {
-    Serial.println("Timer: " + String((int)seconds) + " s remaining");
-
-    if (seconds <= 0) {
-      // Timer finished — sound buzzer
-      digitalWrite(BUZZER_PIN, HIGH);
-      delay(500);
-      digitalWrite(BUZZER_PIN, LOW);
-      Serial.println("Timer done!");
-    }
-  });
-}
-
-void loop() {
-  iot.run();
-}
-```
-
----
-
-### Joystick Widget
-
-Move the joystick in the app to control direction, speed, or camera pan/tilt on the device.
-
-App widget: **Joystick** on pin `V0`
-
-```cpp
-#include <ThingsLinker.h>
-
-ThingsLinker iot("YOUR_AUTH_TOKEN", "YOUR_BLUEPRINT_ID");
-
-void setup() {
-  Serial.begin(115200);
-  iot.begin("YOUR_CLIENT_KEY", "YOUR_SECRET_KEY");
-
-  iot.onJoystick("V0", [](float x, float y) {
-    // x and y are -1.0 to 1.0
-    // x: left (-1) to right (+1)
-    // y: down (-1) to up (+1)
-
-    if (y > 0.5)       Serial.println("Moving FORWARD");
-    else if (y < -0.5) Serial.println("Moving BACKWARD");
-    else if (x > 0.5)  Serial.println("Turning RIGHT");
-    else if (x < -0.5) Serial.println("Turning LEFT");
-    else               Serial.println("STOP");
-
-    Serial.printf("  X:%.2f  Y:%.2f\n", x, y);
-  });
-}
-
-void loop() {
-  iot.run();
-}
-```
-
----
-
-### State Restoration After Reboot
-
-App commands use **MQTT retain** — when the device reconnects, the broker replays the last command for each widget automatically. No extra code needed for basic restoration.
-
-For safety when the broker restarts, also save state to flash:
-
-```cpp
-#include <ThingsLinker.h>
-
-ThingsLinker iot("YOUR_AUTH_TOKEN", "YOUR_BLUEPRINT_ID");
-
-#define RELAY_PIN 4
-bool relayOn = false;
-
-void setup() {
-  Serial.begin(115200);
+  Serial2.begin(115200, SERIAL_8N1, 16, 17);
   pinMode(RELAY_PIN, OUTPUT);
 
-  iot.begin("YOUR_CLIENT_KEY", "YOUR_SECRET_KEY");
+  iot.begin("YOUR_CLIENT_KEY", "YOUR_SECRET_KEY", "airtelgprs.com", 4);
 
-  // Restore last state from flash on boot
-  relayOn = iot.getBool("relay_on", false);
-  digitalWrite(RELAY_PIN, relayOn ? HIGH : LOW);
-  Serial.println("Restored relay: " + String(relayOn ? "ON" : "OFF"));
-
-  iot.onSwitch("V0", [](bool on) {
-    relayOn = on;
-    iot.saveBool("relay_on", on);          // save to flash
+  iot.onSwitch("V1", [](bool on) {              // Switch widget on V1
     digitalWrite(RELAY_PIN, on ? HIGH : LOW);
+    Serial.println(on ? "Relay ON" : "Relay OFF");
   });
 }
 
@@ -573,293 +361,313 @@ void loop() {
   iot.run();
 }
 ```
+
+---
+
+#### Multiple widgets — Temperature + Humidity + Relay
+
+```cpp
+#include <ThingsLinkerGSM.h>
+
+ThingsLinkerGSM iot(Serial2, "YOUR_AUTH_TOKEN", "YOUR_BLUEPRINT_KEY");
+
+#define RELAY_PIN 26
+
+void setup() {
+  Serial.begin(115200);
+  Serial2.begin(115200, SERIAL_8N1, 16, 17);
+  pinMode(RELAY_PIN, OUTPUT);
+
+  iot.begin("YOUR_CLIENT_KEY", "YOUR_SECRET_KEY", "airtelgprs.com", 4);
+
+  iot.onSwitch("V3", [](bool on) {
+    digitalWrite(RELAY_PIN, on ? HIGH : LOW);
+  });
+}
+
+void loop() {
+  iot.run();
+
+  static unsigned long last = 0;
+  if (millis() - last >= 10000) {
+    last = millis();
+
+    float temp = 26.5;     // replace with DHT22 / DS18B20 etc.
+    float hum  = 62.0;
+
+    iot.gauge("V1", temp);   // Gauge widget — temperature
+    iot.gauge("V2", hum);    // Gauge widget — humidity
+    iot.chart("V4", temp);   // Chart widget — temperature history
+  }
+}
+```
+
+---
+
+#### Check connection status
+
+```cpp
+if (iot.mqttConnected()) {
+  Serial.println("Connected!");
+  Serial.println("IP     : " + iot.getIP());
+  Serial.println("Signal : " + String(iot.signalQuality()) + "/31");
+}
+```
+
+---
+
+### GPS Tracker
+
+The **A7672 has a built-in GPS** — no external GPS module needed. The library handles all communication with the GNSS engine internally.
+
+**Additional wiring:**
+```
+Active GPS antenna ──── A7672 ANT_GPS connector (uFL / SMA)
+```
+
+```cpp
+#include <ThingsLinkerGSM.h>
+
+ThingsLinkerGSM iot(Serial2, "YOUR_AUTH_TOKEN", "YOUR_BLUEPRINT_KEY");
+
+void setup() {
+  Serial.begin(115200);
+  Serial2.begin(115200, SERIAL_8N1, 16, 17);
+
+  iot.begin("YOUR_CLIENT_KEY", "YOUR_SECRET_KEY", "airtelgprs.com", 4);
+
+  iot.startGPS();   // start the built-in GNSS engine
+}
+
+void loop() {
+  iot.run();   // GPS is polled automatically inside run()
+
+  static unsigned long last = 0;
+  if (millis() - last >= 5000) {
+    last = millis();
+
+    if (iot.gpsValid()) {
+      iot.map    ("V1", iot.gpsLat(), iot.gpsLng());   // Map widget
+      iot.gauge  ("V2", iot.gpsSpeed());                // Gauge — speed km/h
+      iot.display("V3", iot.gpsAltitude());             // Display — altitude m
+      iot.led    ("V4", true);                          // LED — fix locked
+
+      Serial.printf("GPS: %.6f, %.6f  speed=%.1f km/h\n",
+                    iot.gpsLat(), iot.gpsLng(), iot.gpsSpeed());
+    } else {
+      iot.led("V4", false);                             // LED — searching
+      Serial.println("GPS: searching for fix...");
+    }
+  }
+}
+```
+
+**GPS functions:**
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `iot.startGPS()` | — | Power on GNSS engine (call once in setup) |
+| `iot.gpsValid()` | `bool` | `true` when fix acquired |
+| `iot.gpsLat()` | `float` | Latitude in decimal degrees |
+| `iot.gpsLng()` | `float` | Longitude in decimal degrees |
+| `iot.gpsSpeed()` | `float` | Speed in km/h |
+| `iot.gpsAltitude()` | `float` | Altitude in metres |
+
+> **Note:** First GPS fix can take 30–90 seconds outdoors with a clear sky view. `gpsValid()` returns `false` until the fix is acquired.
+
+---
 
 ## OTA Firmware Updates
 
-The library supports automatic Over-The-Air firmware updates through the ThingsLinker Org Portal. The device checks the backend periodically; when a shipment is set to **Live**, the firmware is downloaded and flashed automatically — no USB cable needed.
-
-> **Important — Partition Scheme & Bootloader**
->
-> OTA only works when both the **base firmware** and the **new firmware** are compiled with an OTA-capable partition scheme. In Arduino IDE go to:
-> **Tools → Partition Scheme → Default with OTA (1.3MB APP / 1.5MB SPIFFS)**
-> (or any scheme that includes two OTA app partitions — OTA\_0 and OTA\_1)
->
-> - The bootloader is written once when you first flash via USB. After that, OTA updates only replace the app partition — the bootloader and partition table are never touched.
-> - If you accidentally compile the new `.bin` with a **different** partition scheme (e.g. "No OTA" or "Huge APP"), the flash will appear to succeed but the device will crash on reboot.
-> - If you ever change the partition scheme, you must re-flash the device via USB — OTA cannot update the partition table.
-> - **Always use the same partition scheme for every sketch you upload to a device**, including the initial base firmware and every subsequent OTA binary.
->
-> **The library performs two automatic pre-flash checks before writing a single byte:**
-> 1. **OTA partition check** — calls `esp_ota_get_next_update_partition()`. If it returns `NULL`, the device has no OTA slot (wrong partition scheme) and the update is aborted immediately with a clear Serial message telling you to re-flash via USB.
-> 2. **Size check** — compares the firmware file size from the server against the actual OTA partition size. If the new binary is too large (typically because it was compiled with a different scheme), the update is aborted before any bytes are written.
->
-> Both failures are reported back to the Org Portal as `failed` with a descriptive error message, so you can see exactly what went wrong in **OTA → Shipments**.
-
-### Org Portal Setup
-
-1. **OTA → New Shipping** — upload your compiled `.bin` and enter a firmware version (e.g. `2.0`)
-2. **Set shipment status → Live** — devices detect this on their next `checkOTA()` call
-3. Monitor real-time progress in **OTA → Shipments** (pending / in progress / completed / failed per device)
-
-### Basic OTA Sketch
+Update your device firmware wirelessly — no USB cable needed.
 
 ```cpp
-#include <ThingsLinker.h>
+#include <ThingsLinker.h>   // or <ThingsLinkerGSM.h>
 
-ThingsLinker iot("YOUR_AUTH_TOKEN", "YOUR_BLUEPRINT_ID");
-
-static const char*    FIRMWARE_VERSION = "1.0";
-static unsigned long  _lastOtaCheck    = 0;
-const  unsigned long  OTA_INTERVAL_MS  = 60000UL;  // check every 60 s
-
-void setup() {
-  Serial.begin(115200);
-  iot.begin("YOUR_CLIENT_KEY", "YOUR_SECRET_KEY");
-}
+// ... iot.begin() in setup() ...
 
 void loop() {
   iot.run();
 
-  if (iot.wifiConnected() && millis() - _lastOtaCheck >= OTA_INTERVAL_MS) {
-    _lastOtaCheck = millis();
-    Serial.println("[OTA] Checking for update...");
+  static unsigned long lastOTA = 0;
+  if (millis() - lastOTA >= 300000UL) {    // check every 5 minutes
+    lastOTA = millis();
 
-    switch (iot.checkOTA()) {
-      case OTA_NO_UPDATE:
-        Serial.printf("[OTA] v%s — up to date.\n", FIRMWARE_VERSION);
-        break;
-      case OTA_FAILED:
-        Serial.println("[OTA] Flash failed. Will retry next interval.");
-        break;
-      case OTA_ERROR:
-        Serial.println("[OTA] Server unreachable. Check WiFi / API server.");
-        break;
-      case OTA_SUCCESS:
-        break;  // device restarts inside checkOTA() — this line is never reached
-    }
+    OTAResult r = iot.checkOTA();
+
+    if (r == OTA_NO_UPDATE) Serial.println("Firmware up to date");
+    if (r == OTA_FAILED)    Serial.println("Update failed — will retry");
+    if (r == OTA_ERROR)     Serial.println("Could not reach server");
+    // OTA_SUCCESS never reaches here — device restarts automatically
   }
 }
 ```
 
-### OTA Result Codes
+**Portal setup:**
+1. **OTA → New Shipping** — upload your compiled `.bin` file
+2. **Set shipment → Live** — devices will detect it on next `checkOTA()`
+3. Monitor progress in **OTA → Shipments**
 
-| Code | Meaning |
-|------|---------|
-| `OTA_NO_UPDATE` | No pending update — device is already up to date |
-| `OTA_SUCCESS` | Firmware flashed; `ESP.restart()` was called — never returns to caller |
-| `OTA_FAILED` | Download or flash failed; failure reported to server; will retry |
-| `OTA_ERROR` | Could not reach the server — check `TL_API_SERVER` (`https://iot.thingslinker.in`) and WiFi |
-
-### Step-by-Step OTA Workflow
-
-```
-[Device v1.0 — 08_OTA_Update]          [Org Portal]
-        │                                     │
-        │  1. upload 11_OTA_TestFirmware.bin  │
-        │     + set shipment Live             │
-        │◄────────────────────────────────────┤
-        │  2. checkOTA() → has_update: true   │
-        │────────────────────────────────────►│ status: in_progress
-        │  3. HTTPUpdate downloads .bin       │
-        │  4. flash + restart                 │
-        │────────────────────────────────────►│ status: completed
-        │                                     │
-[Device v2.0 — NeoPixel RGB running]
-```
-
-### OTA Examples
-
-| Example | Description |
-|---------|-------------|
-| `08_OTA_Update` | Minimal v1.0 base firmware — OTA check loop only |
-| `11_OTA_TestFirmware` | Full v2.0 firmware — NeoPixel RGB + Switch, used as the "new" binary in a shipment |
+> **Important:** Compile with **Tools → Partition Scheme → Default with OTA**. Use the same partition scheme for every firmware version on a device.
 
 ---
 
 ## Storage API
 
-Persist configuration to ESP32 flash (survives reboot):
+Persist values to ESP32 flash — survives power-off and reboot.
 
 ```cpp
 // Save
-iot.saveString("name",  "Living Room");
-iot.saveInt("threshold", 25);
-iot.saveFloat("lat",     37.7749);
-iot.saveBool("alarm",    true);
+iot.saveString("device_name", "Sensor-01");
+iot.saveInt   ("threshold",   30);
+iot.saveFloat ("last_lat",    23.0225);
+iot.saveBool  ("alarm_on",    false);
 
-// Load
-String name = iot.getString("name", "Unknown");
-int thr      = iot.getInt("threshold", 20);
-float lat    = iot.getFloat("lat", 0.0);
-bool alarm   = iot.getBool("alarm", false);
+// Load  (second argument = default if key not found)
+String name  = iot.getString("device_name", "Unknown");
+int    thr   = iot.getInt   ("threshold",   25);
+float  lat   = iot.getFloat ("last_lat",    0.0);
+bool   alarm = iot.getBool  ("alarm_on",    false);
 
 // Manage
-if (iot.hasKey("name"))  iot.removeKey("name");
-iot.clearAllData();        // Erases app data, keeps WiFi
+iot.hasKey("threshold");     // → true / false
+iot.removeKey("threshold");  // delete one key
+iot.clearAllData();          // delete all saved data
 ```
 
-## Status & Utilities
+> Key names must be **≤ 15 characters** (ESP32 NVS limit).
 
-```cpp
-iot.wifiConnected()   // → bool: true if WiFi is connected
-iot.mqttConnected()   // → bool: true if MQTT is connected
-iot.bleActive()       // → bool: true if BLE provisioning is running
-iot.getIP()           // → String: current WiFi IP address
-iot.getChipID()       // → String: unique chip ID (from MAC address)
-iot.resetWiFi()       // Clear saved WiFi credentials and restart BLE
-iot.debug(false)      // Disable library Serial output (default: enabled)
-```
+---
 
-### Custom BLE Device Name (`setBLEName`)
+## Quick Reference
 
-By default the device advertises as **`ThingsLinker_XXXXXX`** (last 6 digits of MAC).
-If you are building a white-label product, you can change this to your own brand name.
+### All publish functions (Device → App)
 
-> Call `setBLEName()` **before** `begin()`.
+| Function | Widget | Description |
+|----------|--------|-------------|
+| `iot.gauge("V1", value)` | Gauge | Numeric value with dial |
+| `iot.chart("V1", value)` | Chart | Value + stores history graph |
+| `iot.display("V1", value)` | Value Display | Large number display |
+| `iot.label("V1", value)` | Label | Text label with value |
+| `iot.led("V1", true/false)` | LED | On/off indicator |
+| `iot.button("V1", true/false)` | Button | Button press state |
+| `iot.slider("V1", value)` | Slider | Slider position |
+| `iot.map("V1", lat, lng)` | Map | GPS location pin |
 
-```cpp
-#include <ThingsLinker.h>
+### All subscribe functions (App → Device)
 
-ThingsLinker iot("YOUR_AUTH_TOKEN", "YOUR_BLUEPRINT_ID");
+| Function | Widget | Callback receives |
+|----------|--------|------------------|
+| `iot.onSwitch("V1", cb)` | Switch | `bool on` |
+| `iot.onButton("V1", cb)` | Button | `bool pressed` |
+| `iot.onLED("V1", cb)` | LED | `bool on` |
+| `iot.onSlider("V1", cb)` | Slider | `float value` |
+| `iot.onValue("V1", cb)` | Value Display | `float value` |
+| `iot.onRGB("V1", cb)` | RGB | `r, g, b, on, count, pattern` |
+| `iot.onTimer("V1", cb)` | Timer | `float seconds` |
+| `iot.onJoystick("V1", cb)` | Joystick | `float x, float y` |
 
-void setup() {
-  Serial.begin(115200);
+### Status functions
 
-  // Change the BLE advertised name to your brand
-  iot.setBLEName("SmartHome");
-  // Device now appears as: SmartHome_BC6575C55494
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `iot.mqttConnected()` | `bool` | MQTT broker connected |
+| `iot.wifiConnected()` | `bool` | WiFi connected *(WiFi only)* |
+| `iot.networkConnected()` | `bool` | GPRS data active *(GSM only)* |
+| `iot.getIP()` | `String` | Current IP address |
+| `iot.signalQuality()` | `int` | GSM signal 0–31 *(GSM only)* |
+| `iot.getChipID()` | `String` | Unique chip ID |
 
-  iot.begin("YOUR_CLIENT_KEY", "YOUR_SECRET_KEY");
-}
+### Virtual Pins
 
-void loop() {
-  iot.run();
-}
-```
+Use `"V0"` through `"V124"` (125 pins total). Assign each pin to a widget in the Organisation Portal dashboard.
 
-After uploading, open the ThingsLinker app and scan for BLE devices — your device will appear as `SmartHome_XXXXXX` instead of `ThingsLinker_XXXXXX`.
-
-### Virtual Pin String Tip
-
-When building pin names dynamically use `snprintf`, not `String`:
-
-```cpp
-// Correct
-char pin[8];
-snprintf(pin, sizeof(pin), "V%d", i);
-iot.led(pin, state);
-
-// Avoid — String temporary may produce dangling const char*
-iot.led("V" + String(i), state);
-```
-
-## Widget → Library Function Reference
-
-| App widget | Publish (Device→App) | Subscribe (App→Device) |
-|-----------|---------------------|----------------------|
-| Button | `iot.button(pin, bool)` | `iot.onButton(pin, cb)` |
-| LED | `iot.led(pin, bool)` | `iot.onLED(pin, cb)` |
-| Switch | — | `iot.onSwitch(pin, cb)` |
-| Slider | `iot.slider(pin, float)` | `iot.onSlider(pin, cb)` |
-| Gauge | `iot.gauge(pin, float)` | — |
-| Chart | `iot.chart(pin, float)` | — |
-| Value Display | `iot.display(pin, float)` | — |
-| Label | `iot.label(pin, float)` | — |
-| RGB | — | `iot.onRGB(pin, cb)` |
-| Timer | — | `iot.onTimer(pin, cb)` |
-| Joystick | — | `iot.onJoystick(pin, cb)` |
-| Map | `iot.map(pin, lat, lng)` | — |
-
-## MQTT Topic Format
-
-```
-device/{WidgetType}/{BlueprintId}/{AuthToken}/{VirtualPin}/
-```
-
-Widget type strings (case-sensitive): `Button`, `Switch`, `Slider`, `Gauge`,
-`Chart`, `Value Display`, `LED`, `Label`, `RGB`, `Timer`, `Joystick`, `Map`
-
-Payload format:
-```json
-{"v": 25.5, "t": 1720000000}
-```
-- `v` — numeric value (float)
-- `t` — Unix timestamp (NTP-synced; falls back to millis()/1000 before NTP sync)
-
-Extra fields for complex widgets go at the **root level** of the JSON object:
-- RGB: `{"v": 1, "r": 0, "g": 255, "b": 204, "status": "ON", "count": 50, "pattern": "Solid", "t": ts}`
-- Map: `{"v": lat, "lat": lat, "lng": lng, "t": ts}`
-- Joystick: `{"v": 0, "x": 0.5, "y": -0.3, "t": ts}`
-
-Device status topic (heartbeat + LWT):
-```
-device/status/{BlueprintId}/{AuthToken}/
-Payload: "ONLINE" or "OFFLINE"  (simple string, retained)
-```
-
-## BLE Provisioning Protocol
-
-**Service UUID:** `4fafc201-1fb5-459e-8fcc-c5c9c331914b`
-
-| Characteristic | UUID | Direction | Description |
-|----------------|------|-----------|-------------|
-| WiFi Credentials | `beb5483e-…` | Write | `{"ssid":"…","password":"…"}` |
-| Status | `cba1d466-…` | Read/Notify | `{"status":"connected","ip":"…"}` |
-| Confirm | `8ec90774-…` | Write | `{"status":"complete"}` triggers restart |
+---
 
 ## Examples
 
-Open via **File → Examples → ThingsLinker**:
+Open via **File → Examples → ThingsLinker** in Arduino IDE:
 
+### WiFi Examples
 | Example | Description |
 |---------|-------------|
-| `00_Connection_Test` | Verify credentials and end-to-end connectivity |
-| `01_SimpleExample` | Minimum working sketch (3 lines) |
-| `01_BLE_Provisioning` | BLE provisioning + BOOT button re-provisioning |
-| `02_BLE_Force_Provision` | Always starts in BLE mode (force re-provisioning) |
-| `02_LED_Control` | Control an LED from the app |
-| `03_Temperature_Monitor` | Publish sensor readings to Gauge widget |
-| `03_Widget_Control_With_Status` | Button + Gauge + online/offline status |
+| `00_Connection_Test` | Verify credentials and connectivity |
+| `01_SimpleExample` | Minimum working sketch |
+| `01_BLE_Provisioning` | BLE provisioning + re-provisioning via BOOT button |
+| `02_BLE_Force_Provision` | Always starts in BLE mode |
+| `02_LED_Control` | Control LED from app |
+| `03_Temperature_Monitor` | Publish sensor to Gauge widget |
 | `04_Advanced_Control` | Multiple widgets simultaneously |
 | `05_Storage_Example` | Persist settings across reboots |
-| `06_Multiple_Pins` | Using V0–V124 (125 pins) |
-| `07_All_Widgets_Test` | All widget types — Button, Switch, Slider, RGB, Timer, Joystick, Gauge, Chart, Value Display, Label, LED |
-| `08_ESP32S3_Full_Dashboard` | Full dashboard: NeoPixel RGB, Joystick, Map, Timer, sensors |
-| `08_OTA_Update` | **OTA** — v1.0 base firmware with periodic `checkOTA()` loop |
-| `09_Clear_WiFi` | Erase credentials & re-provision via BLE |
-| `10_Full_Feature_Test` | All publish + subscribe functions with reconnect handling |
-| `11_OTA_TestFirmware` | **OTA** — v2.0 NeoPixel RGB firmware; compile this as the "new" `.bin` for OTA shipments |
+| `07_All_Widgets_Test` | All widget types in one sketch |
+| `08_OTA_Update` | OTA v1.0 base firmware |
+| `09_Clear_WiFi` | Erase WiFi credentials and re-provision |
+| `10_Full_Feature_Test` | Full publish + subscribe with reconnect |
+| `11_OTA_TestFirmware` | OTA v2.0 test firmware (used as the new `.bin`) |
+
+### GSM Examples
+| Example | Description |
+|---------|-------------|
+| `12_GSM_Connection` | Basic 4G connection + temperature publish + Switch |
+| `13_GSM_Full_Example` | All widgets — Gauge, Chart, Switch, Slider, RGB, Joystick, OTA |
+| `14_GSM_GPS_Tracker` | Live GPS tracking with built-in GNSS — Map, speed, altitude |
+
+---
+
+## Troubleshooting
+
+### WiFi Issues
+| Symptom | Fix |
+|---------|-----|
+| Device not visible in BLE scan | Restart ESP32; check no other BLE client is connected |
+| WiFi fails every boot | Confirm SSID is 2.4 GHz; call `iot.resetWiFi()` to re-provision |
+| MQTT auth failed (state -1) | Check client key and secret key from portal |
+| MQTT connect failed (state -2) | Check internet access; confirm port 8883 is not blocked |
+
+### GSM Issues
+| Symptom | Fix |
+|---------|-----|
+| `Modem not responding` | Check RX/TX wiring, power supply (need 500 mA+), PWRKEY GPIO |
+| `Network registration failed` | Check SIM card is inserted; check antenna; check carrier coverage |
+| `GPRS activation failed` | Check APN string matches your SIM carrier |
+| MQTT connect error 30 | Bad Client Key / Secret Key — verify from portal |
+| MQTT connect error 32 | SSL handshake failed — check modem firmware version |
+| MQTT connect error 3 | Socket connect failed — check SIM data plan is active |
+| Signal quality 99 | No signal — check antenna connection |
+
+### GPS Issues
+| Symptom | Fix |
+|---------|-----|
+| `gpsValid()` always false | Move device outdoors with clear sky view; first fix can take 60–90 s |
+| GPS never gets fix indoors | Normal — GNSS requires open sky. Use a window or external antenna |
+| Speed shows 0 when moving slowly | Normal — GNSS speed is unreliable below ~5 km/h |
+
+### OTA Issues
+| Symptom | Fix |
+|---------|-----|
+| `OTA_ERROR` | Check server URL in `TL_Config.h`; confirm device has internet |
+| `OTA_FAILED` | Verify `.bin` is valid; confirm shipment is set to Live |
+| "No OTA partition found" | Re-flash via USB with **Tools → Partition Scheme → Default with OTA** |
+| "Firmware too large" | Recompile new firmware with same partition scheme as base |
+
+---
 
 ## Library Architecture
 
 ```
 src/
-├── TL_Config.h         Central config — TL_API_SERVER, broker, pins, timeouts, debug
-├── TL_BLE.h/.cpp       BLE provisioning (receive WiFi credentials from app)
-├── TL_WiFi.h/.cpp      WiFi connect, persist, reconnect, NTP init
-├── TL_MQTT.h/.cpp      TLS MQTT — connect, publish, subscribe, LWT
-├── TL_OTA.h/.cpp       OTA firmware update (HTTP download + flash via HTTPUpdate)
-├── TL_Storage.h/.cpp   NVS Preferences wrapper
-├── TL_Base64.h/.cpp    Base64 encode/decode utility
-└── ThingsLinker.h/.cpp Public API — thin wrapper around the above modules
+├── TL_Config.h           Central config — broker, pins, timeouts, debug macros
+├── TL_Storage.h/.cpp     NVS Preferences wrapper (shared by both variants)
+├── TL_OTA.h/.cpp         OTA update via HTTP download + ESP32 flash
+├── ThingsLinker.h/.cpp   WiFi variant — BLE provisioning, WiFi, TLS MQTT
+├── ThingsLinkerGSM.h/.cpp GSM variant  — native A76XX AT commands, GPS
+├── TL_BLE.h/.cpp         BLE provisioning module
+├── TL_WiFi.h/.cpp        WiFi connect, NTP, reconnect
+├── TL_MQTT.h/.cpp        PubSubClient wrapper (WiFi variant)
+└── TL_Base64.h/.cpp      Base64 utility
 ```
 
-## Troubleshooting
-
-| Symptom | Fix |
-|---------|-----|
-| Device not visible in BLE scan | Restart ESP32; ensure no other client is connected |
-| WiFi fails every boot | Check SSID is 2.4 GHz; call `iot.resetWiFi()` to re-provision |
-| MQTT state -1 (auth failed) | Verify client key / secret key from portal |
-| MQTT state -2 (connect failed) | Check internet connectivity and firewall on port 8883 |
-| Timestamps in wrong year | NTP syncs in background — first few payloads may use millis() fallback |
-| Sketch won't compile | Install ArduinoJson and PubSubClient via Library Manager |
-| OTA returns `OTA_ERROR` | Check `TL_API_SERVER` URL in `TL_Config.h`; ensure device has internet access |
-| OTA re-flashes same firmware | Backend auto-corrects stuck `in_progress` records on next `checkOTA()` call |
-| OTA returns `OTA_FAILED` | Check Serial for error message; verify `.bin` is valid and shipment is Live |
-| OTA keeps looping after flash | The device missed reporting completion — fixed automatically on next boot check |
-| Serial: "No OTA partition found" | Base firmware was flashed without OTA partition scheme. Re-flash via USB with Tools → Partition Scheme → Default with OTA |
-| Serial: "Firmware too large for OTA partition" | New `.bin` was compiled with a different partition scheme. Recompile with the same scheme as the base firmware and re-upload the `.bin` to the shipment |
+---
 
 ## License
 

@@ -10,6 +10,7 @@
 #######################################
 
 ThingsLinker	KEYWORD1
+ThingsLinkerGSM	KEYWORD1
 
 #######################################
 # Methods — Lifecycle
@@ -52,6 +53,8 @@ onJoystick	KEYWORD2
 wifiConnected	KEYWORD2
 mqttConnected	KEYWORD2
 bleActive	KEYWORD2
+networkConnected	KEYWORD2
+signalQuality	KEYWORD2
 getIP	KEYWORD2
 getChipID	KEYWORD2
 
@@ -79,6 +82,17 @@ hasKey	KEYWORD2
 removeKey	KEYWORD2
 clearAllData	KEYWORD2
 checkOTA	KEYWORD2
+
+#######################################
+# Methods — GPS (GSM variant only)
+#######################################
+
+startGPS	KEYWORD2
+gpsValid	KEYWORD2
+gpsLat	KEYWORD2
+gpsLng	KEYWORD2
+gpsSpeed	KEYWORD2
+gpsAltitude	KEYWORD2
 
 #######################################
 # Constants / Enums
