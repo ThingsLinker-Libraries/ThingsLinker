@@ -144,15 +144,18 @@ void ThingsLinker::checkConnections() {
 // ─────────────────────────────────────────────────────────────────────────────
 // Widget publish
 // ─────────────────────────────────────────────────────────────────────────────
-void ThingsLinker::button (const char* pin, bool  v) { publishMQTT("Button",        pin, v ? 1.0f : 0.0f); }
-void ThingsLinker::led    (const char* pin, bool  v) { publishMQTT("LED",            pin, v ? 1.0f : 0.0f); }
+void ThingsLinker::button (const char* pin, bool  v) { publishMQTT("Button",        pin, v); }
+void ThingsLinker::led    (const char* pin, bool  v) { publishMQTT("LED",            pin, v); }
 void ThingsLinker::map    (const char* pin, float lat, float lng) { publishMQTTMap(pin, lat, lng); }
 void ThingsLinker::gauge  (const char* pin, float v) { publishMQTT("Gauge",          pin, v); }
 void ThingsLinker::chart  (const char* pin, float v) { publishMQTT("Chart",          pin, v); }
-void ThingsLinker::display(const char* pin, float v) { publishMQTT("Value Display",  pin, v); }
-void ThingsLinker::label  (const char* pin, float v) { publishMQTT("Label",          pin, v); }
 void ThingsLinker::slider (const char* pin, float v) { publishMQTT("Slider",         pin, v); }
-void ThingsLinker::send   (const char* pin, float v) { publishMQTT("Value Display",  pin, v); }
+void ThingsLinker::display (const char* pin, const TLValue& v) { publishMQTT("Value Display", pin, v); }
+void ThingsLinker::label   (const char* pin, const TLValue& v) { publishMQTT("Label",         pin, v); }
+void ThingsLinker::send    (const char* pin, const TLValue& v) { publishMQTT("Value Display", pin, v); }
+// Published on the display channel so the device's own Terminal subscription
+// (onTerminal) does not receive it back. Apps match Terminal output by pin.
+void ThingsLinker::terminal(const char* pin, const TLValue& v) { publishMQTT("Value Display", pin, v); }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Widget subscribe
@@ -162,6 +165,7 @@ void ThingsLinker::onLED   (const char* pin, void (*cb)(bool))  { subscribeMQTTB
 void ThingsLinker::onSwitch(const char* pin, void (*cb)(bool))  { subscribeMQTTButton("Switch", pin, cb); }
 void ThingsLinker::onSlider  (const char* pin, void (*cb)(float))                                   { subscribeMQTT("Slider",        pin, cb); }
 void ThingsLinker::onValue   (const char* pin, void (*cb)(float))                                   { subscribeMQTT("Value Display", pin, cb); }
+void ThingsLinker::onTerminal(const char* pin, void (*cb)(const char*))                             { subscribeMQTTText("Terminal",  pin, cb); }
 void ThingsLinker::onRGB     (const char* pin, void (*cb)(uint8_t r, uint8_t g, uint8_t b, bool on, uint16_t count, const char* pattern)) { subscribeRGBMQTT(pin, cb); }
 void ThingsLinker::onTimer   (const char* pin, void (*cb)(float))                                   { subscribeMQTT("Timer",         pin, cb); }
 void ThingsLinker::onJoystick(const char* pin, void (*cb)(float x, float y))                        { subscribeJoystickMQTT(pin, cb);           }

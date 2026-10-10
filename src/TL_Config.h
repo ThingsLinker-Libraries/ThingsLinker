@@ -42,6 +42,11 @@ extern bool _tlDebugEnabled;  // Defined in ThingsLinker.cpp
 #define MQTT_MAX_PACKET_SIZE 512
 #define MQTT_KEEPALIVE       60    // seconds
 
+// Buffer for one outgoing {"v": ..., "t": ...} payload. Topic + payload must fit
+// in MQTT_MAX_PACKET_SIZE, which leaves room for strings of roughly 300
+// characters. Longer values are rejected and logged, never truncated.
+#define TL_PAYLOAD_BUFFER_SIZE 384
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Subscriptions
 // ─────────────────────────────────────────────────────────────────────────────

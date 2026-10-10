@@ -51,7 +51,7 @@ class WiFiCharCallbacks : public BLECharacteristicCallbacks {
 
     TL_LOG("[BLE] Received: " + raw);
 
-    StaticJsonDocument<256> doc;
+    JsonDocument doc;
     if (deserializeJson(doc, raw.c_str()) != DeserializationError::Ok) {
       TL_LOG("[BLE] JSON parse error");
       return;
@@ -81,7 +81,7 @@ class ConfirmCharCallbacks : public BLECharacteristicCallbacks {
 
     TL_LOG("[BLE] Confirmation: " + raw);
 
-    StaticJsonDocument<128> doc;
+    JsonDocument doc;
     if (deserializeJson(doc, raw.c_str()) != DeserializationError::Ok) return;
 
     const char* status = doc["status"];
@@ -173,7 +173,7 @@ void onBLECredentialsReceived(void (*callback)(String ssid, String password)) {
 void sendBLEStatus(bool connected, const String& ip) {
   if (!_bleActive || !_statusChar) return;
 
-  StaticJsonDocument<128> doc;
+  JsonDocument doc;
   doc["status"] = connected ? "connected" : "failed";
   doc["ip"]     = ip;
 

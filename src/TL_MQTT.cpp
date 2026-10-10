@@ -5,6 +5,7 @@
 
 #include "TL_MQTT.h"
 #include "TL_Config.h"
+#include "TL_Codec.h"
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <time.h>
@@ -52,6 +53,13 @@ struct BoolCallback {
   void (*fn)(bool);
 };
 
+// Text widgets (Terminal): receives the message as a string
+struct TextCallback {
+  char pin[8];
+  char widgetType[20];
+  void (*fn)(const char*);
+};
+
 // RGB widget: receives r, g, b channels + on/off + LED count + pattern name
 struct RGBCallback {
   char pin[8];
@@ -69,6 +77,9 @@ static int              _floatCbCount    = 0;
 
 static BoolCallback     _boolCbs[MAX_SUBSCRIPTIONS];
 static int              _boolCbCount     = 0;
+
+static TextCallback     _textCbs[MAX_SUBSCRIPTIONS];
+static int              _textCbCount     = 0;
 
 static RGBCallback      _rgbCbs[MAX_SUBSCRIPTIONS];
 static int              _rgbCbCount      = 0;
@@ -112,18 +123,19 @@ static void onMqttMessage(char* topic, byte* payload, unsigned int length) {
   TL_LOG("[MQTT] Received on: " + String(topic));
   TL_LOG("[MQTT] Payload: " + String(buf));
 
-  // Parse JSON — 512 bytes covers RGB payloads with r,g,b,pattern,count fields
-  StaticJsonDocument<512> doc;
+  // Parse JSON (ArduinoJson 7 sizes the document automatically)
+  JsonDocument doc;
   if (deserializeJson(doc, buf) != DeserializationError::Ok) {
     TL_LOG("[MQTT] JSON parse error — ignored");
     return;
   }
-  if (!doc.containsKey("v")) {
+  if (doc["v"].isNull()) {
     TL_LOG("[MQTT] No 'v' field — ignored");
     return;
   }
 
-  float value = doc["v"].as<float>();
+  // "v" may be a number, a boolean or a string depending on the widget data type
+  float value = tlNumberOf(doc);
 
   // Extract virtual pin from topic segment [4]
   // Topic: device/{WidgetType}/{BlueprintId}/{AuthToken}/{VirtualPin}/
@@ -140,14 +152,14 @@ static void onMqttMessage(char* topic, byte* payload, unsigned int length) {
   TL_LOG("[MQTT] Pin=" + pin + "  value=" + String(value));
 
   // RGB widget: payload contains separate r, g, b fields (and optional count)
-  if (doc.containsKey("r") && doc.containsKey("g") && doc.containsKey("b")) {
+  if (!doc["r"].isNull() && !doc["g"].isNull() && !doc["b"].isNull()) {
     for (int i = 0; i < _rgbCbCount; i++) {
       if (pin == _rgbCbs[i].pin && _rgbCbs[i].fn) {
         uint8_t     r       = doc["r"].as<uint8_t>();
         uint8_t     g       = doc["g"].as<uint8_t>();
         uint8_t     b       = doc["b"].as<uint8_t>();
-        uint16_t    count   = doc.containsKey("count")   ? doc["count"].as<uint16_t>()      : 1;
-        const char* pattern = doc.containsKey("pattern") ? doc["pattern"].as<const char*>() : "";
+        uint16_t    count   = !doc["count"].isNull()   ? doc["count"].as<uint16_t>()      : 1;
+        const char* pattern = !doc["pattern"].isNull() ? doc["pattern"].as<const char*>() : "";
         _rgbCbs[i].fn(r, g, b, value > 0.0f, count, pattern);
         return;
       }
@@ -155,7 +167,7 @@ static void onMqttMessage(char* topic, byte* payload, unsigned int length) {
   }
 
   // Joystick widget: payload contains separate x, y fields
-  if (doc.containsKey("x") && doc.containsKey("y")) {
+  if (!doc["x"].isNull() && !doc["y"].isNull()) {
     for (int i = 0; i < _joystickCbCount; i++) {
       if (pin == _joystickCbs[i].pin && _joystickCbs[i].fn) {
         float x = doc["x"].as<float>();
@@ -166,10 +178,19 @@ static void onMqttMessage(char* topic, byte* payload, unsigned int length) {
     }
   }
 
+  // Text callbacks (Terminal)
+  for (int i = 0; i < _textCbCount; i++) {
+    if (pin == _textCbs[i].pin && _textCbs[i].fn) {
+      char scratch[32];
+      _textCbs[i].fn(tlTextOf(doc, scratch, sizeof(scratch)));
+      return;
+    }
+  }
+
   // Bool callbacks (Button, Switch)
   for (int i = 0; i < _boolCbCount; i++) {
     if (pin == _boolCbs[i].pin && _boolCbs[i].fn) {
-      _boolCbs[i].fn(value > 0.0f);
+      _boolCbs[i].fn(tlBoolOf(doc));
       return;
     }
   }
@@ -260,6 +281,11 @@ bool connectMQTT(const char* authTokenParam, const char* blueprintIdParam,
     _mqtt.subscribe(topic.c_str(), 1);
     TL_LOG("[MQTT] ✓ Subscribed: " + topic);
   }
+  for (int i = 0; i < _textCbCount; i++) {
+    String topic = buildTopic(_textCbs[i].widgetType, _textCbs[i].pin);
+    _mqtt.subscribe(topic.c_str(), 1);
+    TL_LOG("[MQTT] ✓ Subscribed: " + topic);
+  }
   for (int i = 0; i < _rgbCbCount; i++) {
     String topic = buildTopic("RGB", _rgbCbs[i].pin);
     _mqtt.subscribe(topic.c_str(), 1);
@@ -325,6 +351,26 @@ void subscribeMQTTButton(const char* widgetType, const char* pin, void (*callbac
   }
 }
 
+void subscribeMQTTText(const char* widgetType, const char* pin, void (*callback)(const char*)) {
+  if (_textCbCount >= MAX_SUBSCRIPTIONS) {
+    TL_LOG("[MQTT] ✗ Subscription limit reached (" + String(MAX_SUBSCRIPTIONS) + ")");
+    return;
+  }
+
+  TextCallback& cb = _textCbs[_textCbCount++];
+  strncpy(cb.pin,        pin,        sizeof(cb.pin)        - 1);
+  strncpy(cb.widgetType, widgetType, sizeof(cb.widgetType) - 1);
+  cb.pin[sizeof(cb.pin) - 1]               = '\0';
+  cb.widgetType[sizeof(cb.widgetType) - 1] = '\0';
+  cb.fn = callback;
+
+  if (_mqtt.connected()) {
+    String topic = buildTopic(widgetType, pin);
+    bool ok = _mqtt.subscribe(topic.c_str(), 1);
+    TL_LOG(ok ? "[MQTT] ✓ Subscribed: " + topic : "[MQTT] ✗ Subscribe failed: " + topic);
+  }
+}
+
 void subscribeRGBMQTT(const char* pin, void (*callback)(uint8_t r, uint8_t g, uint8_t b, bool on, uint16_t count, const char* pattern)) {
   if (_rgbCbCount >= MAX_SUBSCRIPTIONS) {
     TL_LOG("[MQTT] ✗ Subscription limit reached");
@@ -359,21 +405,20 @@ void subscribeJoystickMQTT(const char* pin, void (*callback)(float x, float y)) 
   }
 }
 
-void publishMQTT(const char* widgetType, const char* pin, float value) {
+void publishMQTT(const char* widgetType, const char* pin, const TLValue& value) {
   if (!_mqtt.connected()) return;  // Reconnection handled by checkConnections()
 
   String topic = buildTopic(widgetType, pin);
 
-  // Build standard ThingsLinker payload: {"v": <float>, "t": <unix_timestamp>}
-  StaticJsonDocument<128> doc;
-  doc["v"] = value;
-  doc["t"] = getTimestamp();
-
-  char payload[96];
-  serializeJson(doc, payload, sizeof(payload));
+  // Build standard ThingsLinker payload: {"v": <typed value>, "t": <unix_timestamp>}
+  char payload[TL_PAYLOAD_BUFFER_SIZE];
+  if (tlEncodePayload(value, getTimestamp(), payload, sizeof(payload)) == 0) {
+    TL_LOG("[MQTT] ✗ Value too long (" + String(pin) + ") — not sent");
+    return;
+  }
 
   bool ok = _mqtt.publish(topic.c_str(), payload, false);
-  TL_LOG(ok ? "[MQTT] ✓ " + String(pin) + " = " + String(value)
+  TL_LOG(ok ? "[MQTT] ✓ " + String(pin) + " = " + value.toString()
             : "[MQTT] ✗ Publish failed (" + String(pin) + ")");
 }
 
@@ -384,7 +429,7 @@ void publishMQTTMap(const char* pin, float lat, float lng) {
 
   // App parseLoc() looks for "lat" and "lng" fields in the payload object.
   // Include "v" as well (= latitude) to stay compatible with the standard payload schema.
-  StaticJsonDocument<128> doc;
+  JsonDocument doc;
   doc["v"]   = lat;
   doc["lat"] = lat;
   doc["lng"] = lng;

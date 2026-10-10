@@ -282,7 +282,7 @@ void sendSensorData() {
   iot.led("V5", rgbOn);
 
   // V9 — Terminal: uptime log line
-  publishMQTT("Terminal", "V9", (float)(millis() / 1000UL));
+  iot.terminal("V9", String("Uptime ") + String(millis() / 1000UL) + " s");
 
   // V11 — Value Display: CO₂ ppm
   iot.display("V11", co2);

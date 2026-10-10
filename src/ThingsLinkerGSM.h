@@ -45,6 +45,7 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include "TL_Config.h"
+#include "TL_Value.h"
 #include "TL_Storage.h"
 #include "TL_OTA.h"
 
@@ -123,17 +124,27 @@ public:
   /** Publish a value to a Chart widget (stores history).    Pin: V0–V124 */
   void chart(const char* pin, float value);
 
+  // display(), label(), send() and terminal() take a TLValue, so they accept
+  // Integer, Float, Boolean or String directly (see TL_Value.h):
+  //   iot.display("V3", 42);   iot.label("V4", "Door open");
+
   /** Publish a value to a Value Display widget.             Pin: V0–V124 */
-  void display(const char* pin, float value);
+  void display(const char* pin, const TLValue& value);
 
   /** Publish a value to a Label widget.                     Pin: V0–V124 */
-  void label(const char* pin, float value);
+  void label(const char* pin, const TLValue& value);
+
+  /**
+   * Print a line to a Terminal widget.                      Pin: V0–V124
+   * Sent on the pin's display channel so it is not echoed back to onTerminal().
+   */
+  void terminal(const char* pin, const TLValue& text);
 
   /** Publish a Slider position.                             Pin: V0–V124 */
   void slider(const char* pin, float value);
 
   /** Generic publish — maps to Value Display widget.        Pin: V0–V124 */
-  void send(const char* pin, float value);
+  void send(const char* pin, const TLValue& value);
 
   // ── Subscribe (app → device) ────────────────────────────────────────────────
 
@@ -160,6 +171,12 @@ public:
   void onRGB(const char* pin,
              void (*callback)(uint8_t r, uint8_t g, uint8_t b,
                               bool on, uint16_t count, const char* pattern));
+
+  /**
+   * Register a callback for text typed into a Terminal widget in the app.
+   * The pointer is only valid during the callback — copy it to keep it.
+   */
+  void onTerminal(const char* pin, void (*callback)(const char* text));
 
   /** Register a callback for Timer widget values from the app. */
   void onTimer(const char* pin, void (*callback)(float));
@@ -223,6 +240,11 @@ public:
     char widgetType[20];
     void (*fn)(bool);
   };
+  struct TextCb {
+    char pin[8];
+    char widgetType[20];
+    void (*fn)(const char*);
+  };
   struct RGBCb {
     char pin[8];
     void (*fn)(uint8_t r, uint8_t g, uint8_t b,
@@ -256,10 +278,12 @@ private:
   BoolCb  _boolCbs[MAX_SUBSCRIPTIONS];
   RGBCb   _rgbCbs[MAX_SUBSCRIPTIONS];
   JoyCb   _joyCbs[MAX_SUBSCRIPTIONS];
+  TextCb  _textCbs[MAX_SUBSCRIPTIONS];
   int     _floatCount;
   int     _boolCount;
   int     _rgbCount;
   int     _joyCount;
+  int     _textCount;
 
   // ── GPS state ────────────────────────────────────────────────────────────────
   bool          _gpsStarted;
@@ -313,7 +337,7 @@ private:
 
   // ── Misc helpers ─────────────────────────────────────────────────────────────
   String        _buildTopic(const char* widgetType, const char* pin);
-  void          _publish(const char* widgetType, const char* pin, float value);
+  void          _publish(const char* widgetType, const char* pin, const TLValue& value);
   void          _publishMap(const char* pin, float lat, float lng);
   void          _subscribe(const char* widgetType, const char* pin);
   unsigned long _getTimestamp();

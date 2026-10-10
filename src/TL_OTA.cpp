@@ -46,7 +46,7 @@ static bool _otaReportStatus(const char* authToken,
   http.addHeader("X-Device-Token", authToken);
 
   // Build JSON body
-  StaticJsonDocument<256> doc;
+  JsonDocument doc;
   doc["ota_device_id"] = otaDeviceId;
   doc["status"]        = statusStr;
   if (progressPct >= 0)  doc["progress_percentage"] = progressPct;
@@ -97,7 +97,7 @@ OTAResult checkAndApplyOTA(const char* authToken, const char* apiServer)
   http.end();
 
   // ── Parse JSON response ──────────────────────────────────────────────────────
-  StaticJsonDocument<512> doc;
+  JsonDocument doc;
   DeserializationError err = deserializeJson(doc, payload);
   if (err) {
     TL_LOGF("[OTA] JSON parse error: %s\n", err.c_str());

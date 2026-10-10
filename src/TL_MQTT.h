@@ -15,6 +15,7 @@
 #define TL_MQTT_H
 
 #include <Arduino.h>
+#include "TL_Value.h"
 
 /**
  * @brief Connect to MQTT server
@@ -107,16 +108,32 @@ void subscribeRGBMQTT(const char* pin, void (*callback)(uint8_t r, uint8_t g, ui
 void subscribeJoystickMQTT(const char* pin, void (*callback)(float x, float y));
 
 /**
+ * @brief Subscribe to a text widget (receives the message as a string)
+ * @param widgetType Widget type (usually "Terminal")
+ * @param pin Virtual pin (V0 to V124)
+ * @param callback Function to call with the received text. The pointer is
+ *                 only valid during the callback; copy it to keep it.
+ *
+ * Example:
+ *   subscribeMQTTText("Terminal", "V5", [](const char* text) {
+ *     Serial.println(text);
+ *   });
+ */
+void subscribeMQTTText(const char* widgetType, const char* pin, void (*callback)(const char* text));
+
+/**
  * @brief Publish value to a pin (send sensor data to app)
  * @param widgetType Widget type (Button, Switch, Slider, Gauge, etc.)
  * @param pin Virtual pin (V0 to V124 supported - 125 pins total)
- * @param value Value to send
+ * @param value Value to send. The data type follows the argument type:
+ *              int → Integer, float → Float, bool → Boolean, text → String.
  *
  * Example:
- *   publishMQTT("Gauge", "V1", 25.5);    // Temperature
- *   publishMQTT("LED", "V2", 1);         // LED ON
+ *   publishMQTT("Gauge", "V1", 25.5);          // Float
+ *   publishMQTT("LED", "V2", true);            // Boolean
+ *   publishMQTT("Label", "V3", "Door open");   // String
  */
-void publishMQTT(const char* widgetType, const char* pin, float value);
+void publishMQTT(const char* widgetType, const char* pin, const TLValue& value);
 
 /**
  * @brief Publish GPS coordinates to a Map widget.

@@ -12,6 +12,7 @@
  */
 
 #include "ThingsLinkerGSM.h"
+#include "TL_Codec.h"
 #include <time.h>
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -38,6 +39,7 @@ ThingsLinkerGSM::ThingsLinkerGSM(HardwareSerial& serial,
     _boolCount(0),
     _rgbCount(0),
     _joyCount(0),
+    _textCount(0),
     _rxState(GSM_RX_IDLE),
     _rxTopicExpected(0),
     _rxPayloadExpected(0),
@@ -507,6 +509,10 @@ void ThingsLinkerGSM::_subscribeAll() {
     String t = _buildTopic(_floatCbs[i].widgetType, _floatCbs[i].pin);
     _mqttSubscribeAT(t.c_str());
   }
+  for (int i = 0; i < _textCount; i++) {
+    String t = _buildTopic(_textCbs[i].widgetType, _textCbs[i].pin);
+    _mqttSubscribeAT(t.c_str());
+  }
   for (int i = 0; i < _rgbCount; i++) {
     String t = _buildTopic("RGB", _rgbCbs[i].pin);
     _mqttSubscribeAT(t.c_str());
@@ -678,17 +684,18 @@ void ThingsLinkerGSM::_processLine(const char* line) {
 // Dispatch a fully received MQTT message to registered callbacks
 // ─────────────────────────────────────────────────────────────────────────────
 void ThingsLinkerGSM::_dispatchMessage(const char* topic, const char* payload) {
-  StaticJsonDocument<512> doc;
+  JsonDocument doc;
   if (deserializeJson(doc, payload) != DeserializationError::Ok) {
     TL_LOG("[MQTT] JSON parse error");
     return;
   }
-  if (!doc.containsKey("v")) {
+  if (doc["v"].isNull()) {
     TL_LOG("[MQTT] No 'v' field");
     return;
   }
 
-  float value = doc["v"].as<float>();
+  // "v" may be a number, a boolean or a string depending on the widget data type
+  float value = tlNumberOf(doc);
 
   // Extract virtual pin from topic: device/{Type}/{Blueprint}/{AuthToken}/{Pin}/
   //   indices:                         0      1       2           3          4
@@ -710,14 +717,14 @@ void ThingsLinkerGSM::_dispatchMessage(const char* topic, const char* payload) {
   TL_LOGF("[MQTT] pin=%s  value=%.2f\n", pin, value);
 
   // RGB widget
-  if (doc.containsKey("r") && doc.containsKey("g") && doc.containsKey("b")) {
+  if (!doc["r"].isNull() && !doc["g"].isNull() && !doc["b"].isNull()) {
     for (int i = 0; i < _rgbCount; i++) {
       if (strcmp(pin, _rgbCbs[i].pin) == 0 && _rgbCbs[i].fn) {
         uint8_t     r       = doc["r"].as<uint8_t>();
         uint8_t     g       = doc["g"].as<uint8_t>();
         uint8_t     b       = doc["b"].as<uint8_t>();
-        uint16_t    count   = doc.containsKey("count")   ? doc["count"].as<uint16_t>()      : 1;
-        const char* pattern = doc.containsKey("pattern") ? doc["pattern"].as<const char*>() : "";
+        uint16_t    count   = !doc["count"].isNull()   ? doc["count"].as<uint16_t>()      : 1;
+        const char* pattern = !doc["pattern"].isNull() ? doc["pattern"].as<const char*>() : "";
         _rgbCbs[i].fn(r, g, b, value > 0.0f, count, pattern);
         return;
       }
@@ -725,7 +732,7 @@ void ThingsLinkerGSM::_dispatchMessage(const char* topic, const char* payload) {
   }
 
   // Joystick widget
-  if (doc.containsKey("x") && doc.containsKey("y")) {
+  if (!doc["x"].isNull() && !doc["y"].isNull()) {
     for (int i = 0; i < _joyCount; i++) {
       if (strcmp(pin, _joyCbs[i].pin) == 0 && _joyCbs[i].fn) {
         _joyCbs[i].fn(doc["x"].as<float>(), doc["y"].as<float>());
@@ -734,10 +741,19 @@ void ThingsLinkerGSM::_dispatchMessage(const char* topic, const char* payload) {
     }
   }
 
+  // Text callbacks (Terminal)
+  for (int i = 0; i < _textCount; i++) {
+    if (strcmp(pin, _textCbs[i].pin) == 0 && _textCbs[i].fn) {
+      char scratch[32];
+      _textCbs[i].fn(tlTextOf(doc, scratch, sizeof(scratch)));
+      return;
+    }
+  }
+
   // Bool callbacks (Button / LED / Switch)
   for (int i = 0; i < _boolCount; i++) {
     if (strcmp(pin, _boolCbs[i].pin) == 0 && _boolCbs[i].fn) {
-      _boolCbs[i].fn(value > 0.5f);
+      _boolCbs[i].fn(tlBoolOf(doc));
       return;
     }
   }
@@ -841,24 +857,23 @@ String ThingsLinkerGSM::_buildTopic(const char* widgetType, const char* pin) {
          + _blueprintId + "/" + _authToken + "/" + pin + "/";
 }
 
-void ThingsLinkerGSM::_publish(const char* widgetType, const char* pin, float value) {
+void ThingsLinkerGSM::_publish(const char* widgetType, const char* pin, const TLValue& value) {
   String topic = _buildTopic(widgetType, pin);
 
-  StaticJsonDocument<128> doc;
-  doc["v"] = value;
-  doc["t"] = _getTimestamp();
-
-  char payload[96];
-  serializeJson(doc, payload, sizeof(payload));
+  char payload[TL_PAYLOAD_BUFFER_SIZE];
+  if (tlEncodePayload(value, _getTimestamp(), payload, sizeof(payload)) == 0) {
+    TL_LOGF("[MQTT] ✗ Value too long (%s) — not sent\n", pin);
+    return;
+  }
 
   bool ok = _mqttPublishAT(topic.c_str(), payload);
-  TL_LOGF("[MQTT] %s %s = %.2f\n", ok ? "✓" : "✗", pin, value);
+  TL_LOGF("[MQTT] %s %s = %s\n", ok ? "✓" : "✗", pin, value.toString().c_str());
 }
 
 void ThingsLinkerGSM::_publishMap(const char* pin, float lat, float lng) {
   String topic = _buildTopic("Map", pin);
 
-  StaticJsonDocument<128> doc;
+  JsonDocument doc;
   doc["v"]   = lat;
   doc["lat"] = lat;
   doc["lng"] = lng;
@@ -879,14 +894,17 @@ void ThingsLinkerGSM::_subscribe(const char* widgetType, const char* pin) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Publish methods
 // ─────────────────────────────────────────────────────────────────────────────
-void ThingsLinkerGSM::button (const char* p, bool  v) { _publish("Button",       p, v ? 1.0f : 0.0f); }
-void ThingsLinkerGSM::led    (const char* p, bool  v) { _publish("LED",           p, v ? 1.0f : 0.0f); }
+void ThingsLinkerGSM::button (const char* p, bool  v) { _publish("Button",       p, v); }
+void ThingsLinkerGSM::led    (const char* p, bool  v) { _publish("LED",           p, v); }
 void ThingsLinkerGSM::gauge  (const char* p, float v) { _publish("Gauge",         p, v); }
 void ThingsLinkerGSM::chart  (const char* p, float v) { _publish("Chart",         p, v); }
-void ThingsLinkerGSM::display(const char* p, float v) { _publish("Value Display", p, v); }
-void ThingsLinkerGSM::label  (const char* p, float v) { _publish("Label",         p, v); }
 void ThingsLinkerGSM::slider (const char* p, float v) { _publish("Slider",        p, v); }
-void ThingsLinkerGSM::send   (const char* p, float v) { _publish("Value Display", p, v); }
+void ThingsLinkerGSM::display (const char* p, const TLValue& v) { _publish("Value Display", p, v); }
+void ThingsLinkerGSM::label   (const char* p, const TLValue& v) { _publish("Label",         p, v); }
+void ThingsLinkerGSM::send    (const char* p, const TLValue& v) { _publish("Value Display", p, v); }
+// Published on the display channel so the device's own Terminal subscription
+// (onTerminal) does not receive it back. Apps match Terminal output by pin.
+void ThingsLinkerGSM::terminal(const char* p, const TLValue& v) { _publish("Value Display", p, v); }
 void ThingsLinkerGSM::map    (const char* p, float lat, float lng) { _publishMap(p, lat, lng); }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -950,6 +968,17 @@ void ThingsLinkerGSM::onRGB(const char* pin,
   _rgbCbs[_rgbCount].fn = cb;
   _rgbCount++;
   _subscribe("RGB", pin);
+}
+
+void ThingsLinkerGSM::onTerminal(const char* pin, void (*cb)(const char*)) {
+  if (_textCount >= MAX_SUBSCRIPTIONS) { TL_LOG("[MQTT] Subscription limit reached"); return; }
+  TextCb& t = _textCbs[_textCount++];
+  strncpy(t.pin,        pin,        sizeof(t.pin)        - 1);
+  strncpy(t.widgetType, "Terminal", sizeof(t.widgetType) - 1);
+  t.pin[sizeof(t.pin) - 1]               = '\0';
+  t.widgetType[sizeof(t.widgetType) - 1] = '\0';
+  t.fn = cb;
+  _subscribe("Terminal", pin);
 }
 
 void ThingsLinkerGSM::onTimer(const char* pin, void (*cb)(float)) {

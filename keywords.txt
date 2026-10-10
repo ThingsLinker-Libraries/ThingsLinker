@@ -28,6 +28,7 @@ chart	KEYWORD2
 display	KEYWORD2
 send	KEYWORD2
 label	KEYWORD2
+terminal	KEYWORD2
 led	KEYWORD2
 button	KEYWORD2
 slider	KEYWORD2
@@ -45,6 +46,7 @@ onRGB	KEYWORD2
 onLED	KEYWORD2
 onTimer	KEYWORD2
 onJoystick	KEYWORD2
+onTerminal	KEYWORD2
 
 #######################################
 # Methods — Status
@@ -99,6 +101,11 @@ gpsAltitude	KEYWORD2
 #######################################
 
 OTAResult	KEYWORD1
+TLValue	KEYWORD1
+TL_INT	LITERAL1
+TL_FLOAT	LITERAL1
+TL_BOOL	LITERAL1
+TL_STRING	LITERAL1
 OTA_NO_UPDATE	LITERAL1
 OTA_SUCCESS	LITERAL1
 OTA_FAILED	LITERAL1

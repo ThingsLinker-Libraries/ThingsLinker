@@ -37,6 +37,7 @@
 
 #include <Arduino.h>
 #include "TL_Config.h"
+#include "TL_Value.h"
 #include "TL_BLE.h"
 #include "TL_WiFi.h"
 #include "TL_MQTT.h"
@@ -74,6 +75,18 @@ public:
   void run();
 
   // ── Publish (device → app) ──────────────────────────────────────────────────
+  //
+  // Data types per widget (same rules as the portal "Data Type" setting):
+  //
+  //   Button, Switch, LED        Boolean
+  //   Slider, Gauge, Chart       Integer or Float
+  //   Value Display, Label       Integer, Float, Boolean or String
+  //   Terminal                   String
+  //   RGB, Timer, Map, Joystick  structured (dedicated methods)
+  //
+  // Methods taking a TLValue accept any of these directly — the data type is
+  // taken from the argument type, e.g. 42 → Integer, 23.5f → Float,
+  // true → Boolean, "Running" / String → String.
 
   /** Publish a Button state (1 = pressed, 0 = released).   Pin: V0–V124 */
   void button(const char* pin, bool value);
@@ -96,17 +109,47 @@ public:
   /** Publish a value to a Chart widget (stores history).    Pin: V0–V124 */
   void chart(const char* pin, float value);
 
-  /** Publish a value to a Value Display widget.             Pin: V0–V124 */
-  void display(const char* pin, float value);
+  /**
+   * Publish a value to a Value Display widget.              Pin: V0–V124
+   * Accepts Integer, Float, Boolean or String.
+   *
+   * Example:
+   *   iot.display("V3", 42);          // Integer
+   *   iot.display("V3", 23.5f);       // Float
+   *   iot.display("V3", "Running");   // String
+   */
+  void display(const char* pin, const TLValue& value);
 
-  /** Publish a value to a Label widget.                     Pin: V0–V124 */
-  void label(const char* pin, float value);
+  /**
+   * Publish a value to a Label widget.                      Pin: V0–V124
+   * Accepts Integer, Float, Boolean or String.
+   *
+   * Example:
+   *   iot.label("V4", "Door open");
+   *   iot.label("V4", String("Zone ") + zone);
+   */
+  void label(const char* pin, const TLValue& value);
+
+  /**
+   * Print a line to a Terminal widget.                      Pin: V0–V124
+   * Numbers and booleans are accepted too and shown as text.
+   *
+   * The line is sent on the pin's display channel, not the Terminal control
+   * channel, so it is never echoed back into your own onTerminal() callback.
+   *
+   * Example:
+   *   iot.terminal("V5", "Boot complete");
+   */
+  void terminal(const char* pin, const TLValue& text);
 
   /** Publish a Slider position.                             Pin: V0–V124 */
   void slider(const char* pin, float value);
 
-  /** Generic publish — maps to Value Display widget.        Pin: V0–V124 */
-  void send(const char* pin, float value);
+  /**
+   * Generic publish — maps to Value Display widget.         Pin: V0–V124
+   * Accepts Integer, Float, Boolean or String.
+   */
+  void send(const char* pin, const TLValue& value);
 
   // ── Subscribe (app → device) ────────────────────────────────────────────────
 
@@ -157,6 +200,21 @@ public:
    *   iot.onValue("V3", [](float v) { Serial.println(v); });
    */
   void onValue(const char* pin, void (*callback)(float));
+
+  /**
+   * Register a callback for text typed into a Terminal widget in the app.
+   * The pointer is only valid during the callback — copy it to keep it.
+   *
+   * The apps publish with the MQTT retain flag, so the last text sent is
+   * delivered again every time the device reconnects. Do not trigger one-off
+   * actions such as a restart directly from it.
+   *
+   * Example:
+   *   iot.onTerminal("V5", [](const char* text) {
+   *     Serial.printf("Terminal: %s\n", text);
+   *   });
+   */
+  void onTerminal(const char* pin, void (*callback)(const char* text));
 
   /**
    * Register a callback for RGB widget color changes from the app.

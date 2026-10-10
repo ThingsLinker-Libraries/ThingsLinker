@@ -49,7 +49,7 @@ Both use the **exact same widget API** — `gauge()`, `onSwitch()`, `run()` etc.
 ### Quick Start (WiFi)
 
 **Step 1 — Install dependencies** (Arduino Library Manager):
-- **ArduinoJson** ≥ 6.x
+- **ArduinoJson** ≥ 7.4.3
 - **PubSubClient** ≥ 2.8
 
 **Step 2 — Get your credentials** from the Organisation Portal:
@@ -547,12 +547,36 @@ iot.clearAllData();          // delete all saved data
 |----------|--------|-------------|
 | `iot.gauge("V1", value)` | Gauge | Numeric value with dial |
 | `iot.chart("V1", value)` | Chart | Value + stores history graph |
-| `iot.display("V1", value)` | Value Display | Large number display |
-| `iot.label("V1", value)` | Label | Text label with value |
+| `iot.display("V1", value)` | Value Display | Number, boolean or text |
+| `iot.label("V1", value)` | Label | Text label (text, number or boolean) |
+| `iot.terminal("V1", text)` | Terminal | Print a line to the terminal |
 | `iot.led("V1", true/false)` | LED | On/off indicator |
 | `iot.button("V1", true/false)` | Button | Button press state |
 | `iot.slider("V1", value)` | Slider | Slider position |
 | `iot.map("V1", lat, lng)` | Map | GPS location pin |
+
+### Data types
+
+Every widget has a data type, set in the portal under the widget's **Data Type**. The library sends the matching JSON type automatically, based on the type of the value you pass. Nothing is guessed from the content, so `"123"` stays text and `123` stays a number.
+
+| Widget | Data types | Example |
+|--------|-----------|---------|
+| Button, Switch, LED | Boolean | `iot.led("V1", true)` |
+| Slider, Gauge, Chart | Integer, Float | `iot.gauge("V1", 23.5f)` |
+| Value Display, Label | Integer, Float, Boolean, String | `iot.display("V1", 42)` / `iot.label("V1", "Door open")` |
+| Terminal | String | `iot.terminal("V1", "Boot complete")` |
+| RGB, Timer, Map, Joystick | Structured | `iot.map("V1", lat, lng)` |
+
+```cpp
+iot.display("V3", 42);                         // Integer  → {"v":42}
+iot.display("V3", 23.5f);                      // Float    → {"v":23.5}
+iot.display("V3", true);                       // Boolean  → {"v":1}
+iot.display("V3", "Running");                  // String   → {"v":"Running"}
+iot.label("V4", String("Zone ") + zone);       // Arduino String works too
+iot.label("V4", iot.getIP());
+```
+
+Text values can be up to roughly 300 characters. Longer values are not sent and an error is logged.
 
 ### All subscribe functions (App → Device)
 
@@ -563,6 +587,7 @@ iot.clearAllData();          // delete all saved data
 | `iot.onLED("V1", cb)` | LED | `bool on` |
 | `iot.onSlider("V1", cb)` | Slider | `float value` |
 | `iot.onValue("V1", cb)` | Value Display | `float value` |
+| `iot.onTerminal("V1", cb)` | Terminal | `const char* text` |
 | `iot.onRGB("V1", cb)` | RGB | `r, g, b, on, count, pattern` |
 | `iot.onTimer("V1", cb)` | Timer | `float seconds` |
 | `iot.onJoystick("V1", cb)` | Joystick | `float x, float y` |

@@ -166,7 +166,7 @@ void loop() {
     iot.chart(PIN_CHART_TEMP, temperature);
     iot.display(PIN_UPTIME,   (float)(now / 60000UL));   // minutes since boot
     iot.display(PIN_SIGNAL,   (float)iot.signalQuality());
-    iot.label(PIN_IP_LABEL,   0);   // Label widget shows static text — send 0
+    iot.label(PIN_IP_LABEL,   iot.getIP());              // Label accepts text
 
     Serial.printf("[Publish] temp=%.1f°C  hum=%.1f%%  uptime=%lum  signal=%d/31\n",
                   temperature, humidity, now / 60000UL, iot.signalQuality());
